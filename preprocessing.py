@@ -3,16 +3,6 @@
 import re
 from torch.nn.functional import one_hot
 import torch
-import numpy as np
-
-label_to_int = {
-    'MSA' : 0,
-    'ANN' : 1,
-    'MOR' : 2,
-    'SYR' : 3,
-    'PAL' : 4,
-    'ALG' : 5,
-}
 
 # TODO: normalize arabic presentation forms
 
@@ -25,6 +15,7 @@ numbers_re = re.compile(r'[0-9\u0660-\u0669]+')
 
 class TextPreprocessor(object):
     def __init__(self, config):
+        self.labels_to_int = config['labels_to_int']
         self.max_seq_len = config['preprocessing']['max_seq_len']
         self.tokenization = config['preprocessing']['tokenization']
         self.normalize = config['preprocessing']['normalize']
@@ -32,6 +23,9 @@ class TextPreprocessor(object):
         self.token2int_dict = self.get_char2int_dict() if self.tokenization == 'char' \
             else self.get_word2int_dict()
         print('token2int dict: ', self.token2int_dict)
+
+    def get_num_tokens(self):
+        return len(self.token2int_dict)
 
     def get_char2int_dict(self):
         all_chars = ' '.join([chr(c) for c in range(2**16)])
@@ -109,15 +103,15 @@ class TextPreprocessor(object):
         return int_tokenized_text + [0] * (self.max_seq_len - len(int_tokenized_text))
 
     def __call__(self, batch):
-        int_labels = [label_to_int[pair[0]] for pair in batch]
+        int_labels = [self.labels_to_int[pair[0]] for pair in batch]
         int_labels_tensor = torch.LongTensor(int_labels)
-        one_hot_labels = one_hot(int_labels_tensor, len(label_to_int))
+        one_hot_labels = one_hot(int_labels_tensor, len(self.labels_to_int))
 
         tokenized_texts = [self.prepare_text(pair[1]) for pair in batch]
         int_tokenized_texts = [ [self.token2int_dict[c] for c in tokenized_text] for tokenized_text in tokenized_texts]
         int_tokenized_texts_tensor = torch.LongTensor([self.standardize_tokens_length(int_toks)
                                                        for int_toks in int_tokenized_texts])
-        one_hot_tokens = one_hot(int_tokenized_texts_tensor, len(self.token2int_dict))
+        int_tokenized_texts_tensor.permute(1,0) # Pytorch prefers sequence batches to be T, B, F
 
-        return one_hot_labels, one_hot_tokens
+        return one_hot_labels, int_tokenized_texts_tensor
 
