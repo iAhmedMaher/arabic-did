@@ -16,7 +16,6 @@ numbers_re = re.compile(r'[0-9\u0660-\u0669]+')
 class TextPreprocessor(object):
     def __init__(self, config):
         self.labels_to_int = config['labels_to_int']
-        self.max_seq_len = config['preprocessing']['max_seq_len']
         self.tokenization = config['preprocessing']['tokenization']
         self.normalize = config['preprocessing']['normalize']
         self.max_rep = config['preprocessing']['max_rep']
@@ -96,22 +95,22 @@ class TextPreprocessor(object):
     def word_tokenize(self, text):
         return text.split()
 
-    def standardize_tokens_length(self, int_tokenized_text):
-        if len(int_tokenized_text) > self.max_seq_len:
-            return int_tokenized_text[:self.max_seq_len]
+    def standardize_tokens_length(self, int_tokenized_text, max_seq_len):
+        if len(int_tokenized_text) > max_seq_len:
+            return int_tokenized_text[:max_seq_len]
 
-        return int_tokenized_text + [0] * (self.max_seq_len - len(int_tokenized_text))
+        return int_tokenized_text + [0] * (max_seq_len - len(int_tokenized_text))
 
     def __call__(self, batch):
         int_labels = [self.labels_to_int[pair[0]] for pair in batch]
         int_labels_tensor = torch.LongTensor(int_labels)
-        one_hot_labels = one_hot(int_labels_tensor, len(self.labels_to_int))
 
         tokenized_texts = [self.prepare_text(pair[1]) for pair in batch]
         int_tokenized_texts = [ [self.token2int_dict[c] for c in tokenized_text] for tokenized_text in tokenized_texts]
-        int_tokenized_texts_tensor = torch.LongTensor([self.standardize_tokens_length(int_toks)
+        max_seq_len = max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts])
+        int_tokenized_texts_tensor = torch.LongTensor([self.standardize_tokens_length(int_toks, max_seq_len)
                                                        for int_toks in int_tokenized_texts])
-        int_tokenized_texts_tensor.permute(1,0) # Pytorch prefers sequence batches to be T, B, F
+        int_tokenized_texts_tensor = int_tokenized_texts_tensor.permute(1,0) # Pytorch prefers sequence batches to be T, B, F
 
-        return one_hot_labels, int_tokenized_texts_tensor
+        return int_labels_tensor, int_tokenized_texts_tensor
 
