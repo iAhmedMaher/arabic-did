@@ -8,9 +8,20 @@ from preprocessing import TextPreprocessor
 import config as cfg
 import models as m
 import torch
+import collections
 
 train_dataset = None
 eval_dataset = None
+
+def flatten_dict(d, parent_key='', sep='_'):
+    items = []
+    for k, v in d.items():
+        new_key = parent_key + sep + k if parent_key else k
+        if isinstance(v, collections.MutableMapping):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 
 def get_comet_api_key(config):
@@ -56,16 +67,19 @@ def get_eval_dataloader(config, transformer):
                       collate_fn=transformer)
 
 
-def get_optimizer(model, config):
-    if config['optimizer']['name'] == 'sparse_adam':
-        return optim.Adam(model.parameters(), lr=config['optimizer']['lr'], betas=config['optimizer']['betas'],
+def get_optimizers(model, config):
+    if config['optimizer']['name'] == 'adam':
+        non_sparse = optim.Adam(model.get_non_sparse_parameters(), lr=config['optimizer']['lr'], betas=config['optimizer']['betas'],
                                 eps=config['optimizer']['eps'])
+        sparse =  optim.SparseAdam(model.get_sparse_parameters(), lr=config['optimizer']['lr'], betas=config['optimizer']['betas'],
+                                eps=config['optimizer']['eps'])
+        return non_sparse, sparse
     else:
         raise NotImplementedError()
 
 def setup_training(config):
-    experiment = Experiment(get_comet_api_key(config), project_name=config['comet_project_name'])
-    experiment.log_parameters(config['model'])
+    experiment = Experiment(get_comet_api_key(config), project_name=config['comet_project_name'], log_code=True)
+    experiment.log_parameters(flatten_dict(config))
 
     text_proc = TextPreprocessor(config)
 
@@ -81,21 +95,23 @@ def normal_training(config):
     print('Using device', device)
     exp, model, train_dataloader, eval_dataloader = setup_training(config)
     model.train()
-    model = model.to_device(device)
-    optimizer = get_optimizer(model, config)
+    model = model.to(device)
+    non_sparse_optimizer, sparse_optimizer = get_optimizers(model, config)
     epoch = 0
+    num_examples = 0
     while True:
         for idx, batch in enumerate(train_dataloader):
-            batch = batch.to_device(device)
-            loss = training_step(batch, model, optimizer)
+            batch = (batch[0].to(device), batch[1].to(device))
+            num_examples += len(batch[0])
+            loss = training_step(batch, model, [non_sparse_optimizer, sparse_optimizer])
             if idx % 50 == 0:
-                print(epoch, idx, loss.detach().numpy())
-                exp.log_metric('loss', loss.detach().numpy(), step=idx + len(train_dataloader) * epoch, epoch=epoch)
+                print(epoch, num_examples, loss.detach().cpu().numpy())
+                exp.log_metric('loss', loss.detach().cpu().numpy(), step=num_examples, epoch=epoch)
         epoch += 1
 
 
-def training_step(training_batch, model, optimizer):
-    optimizer.zero_grad()
+def training_step(training_batch, model, optimizers):
+    [opt.zero_grad() for opt in optimizers]
     labels, tokens = training_batch
     outputs = model(tokens)
     output_len, classes = outputs.size()[0], outputs.size()[2]
@@ -103,7 +119,7 @@ def training_step(training_batch, model, optimizer):
     labels = labels.repeat(output_len)
     loss = cross_entropy(outputs, labels)
     loss.backward()
-    optimizer.step()
+    [opt.step() for opt in optimizers]
     return loss
 
 
