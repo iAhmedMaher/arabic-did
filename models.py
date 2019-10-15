@@ -9,6 +9,7 @@ def get_model(input_size, config):
 class SimpleGRU(nn.Module):
     def __init__(self, input_size, config):
         super(SimpleGRU, self).__init__()
+        print('starting with hidden size', config['simple_gru']['hidden_size'])
         self.embedding_layer = nn.Embedding(input_size, config['simple_gru']['embedding_size'], padding_idx=0, sparse=True)
         self.rnn = nn.GRU(config['simple_gru']['embedding_size'], config['simple_gru']['hidden_size'],
                           config['simple_gru']['num_layers'], dropout=config['simple_gru']['dropout'],
@@ -28,7 +29,7 @@ class SimpleGRU(nn.Module):
     def forward(self, x):
         x = self.embedding_layer(x)
         x, h_n = self.rnn(x)
-        if not self.output_all:
+        if not self.output_all or not self.training:
             x = x[-1, :, :].unsqueeze(0)
         x = self.output_scores(x)
         return x
