@@ -141,19 +141,61 @@ def tune_training(config):
     from hyper_tune import TuneTrainable
     import ray
     from ray import tune
-    from ray.tune.schedulers import HyperBandScheduler
+    from ray.tune.schedulers import HyperBandScheduler, HyperBandForBOHB, AsyncHyperBandScheduler
+    import ray.tune.suggest as suggest
     from ray.tune import sample_from
+    import ConfigSpace as CS
+    import ConfigSpace.hyperparameters as CSH
+    from ray.tune.suggest.hyperopt import HyperOptSearch
+    from hyperopt import hp
 
     ray.init()
 
-    scheduler = HyperBandScheduler(time_attr='num_examples', metric=config['tune']['discriminating_metric'], mode='max',
-                                   max_t=300000)
+    if config['tune']['tuning_method'] == 'bohb':
+        config_space = CS.ConfigurationSpace(seed=42)
 
-    config['simple_gru']['hidden_size'] = sample_from(lambda spec: 2 ** random.randint(4, 8))
-    tune.run(TuneTrainable, scheduler=scheduler, config=config, num_samples=3, name=config['experiment_name'],
-             resources_per_trial=config['tune']['resources_per_trial'], local_dir=config['tune']['working_dir'])
+        # replace | convention is a kludge because of BOHB's specialized interface
+        config_space.add_hyperparameters([CSH.UniformIntegerHyperparameter('replace|num_layers', lower=1, upper=5),
+                                          CSH.UniformIntegerHyperparameter('replace|hidden_size', lower=64, upper=512),
+                                          CSH.UniformIntegerHyperparameter('replace|embedding_size', lower=64,
+                                                                           upper=512),
+                                          CSH.UniformFloatHyperparameter('replace|dropout', lower=0.0, upper=0.5),
+                                          CSH.CategoricalHyperparameter('replace|bidirectional', choices=[True, False]),
+                                          CSH.UniformFloatHyperparameter('replace|lr', lower=0.00001, upper=0.1,
+                                                                         log=True)])
+        bohb_hyperband = HyperBandForBOHB(time_attr='num_examples', metric=config['tune']['discriminating_metric'],
+                                          mode=config['tune']['discriminating_metric_mode'],
+                                          max_t=config['tune']['max_t'])
+
+        bohb_search = suggest.bohb.TuneBOHB(config_space, max_concurrent=1,
+                                            metric=config['tune']['discriminating_metric'],
+                                            mode=config['tune']['discriminating_metric_mode'])
+
+        return tune.run(TuneTrainable, config=config, scheduler=bohb_hyperband, search_alg=bohb_search, num_samples=1,
+                        name=config['experiment_name'],
+                        resources_per_trial=config['tune']['resources_per_trial'],
+                        local_dir=config['tune']['working_dir'])
+
+    elif config['tune']['tuning_method'] == 'hyperopt':
+        space = {"replace|hidden_size": hp.quniform("replace|hidden_size", 64, 512, 2),
+                 "replace|embedding_size": hp.quniform("replace|embedding_size", 128, 1024, 2),
+                 "replace|bidirectional": hp.choice("replace|bidirectional", [True, False]),
+                 "replace|num_layers": hp.quniform("replace|num_layers", 1, 5, 1),
+                 "replace|dropout": hp.loguniform("replace|dropout", -11, -0.8)}
+        algo = HyperOptSearch(space, max_concurrent=10, metric=config['tune']['discriminating_metric'],
+                              mode=config['tune']['discriminating_metric_mode'])
+        scheduler = HyperBandScheduler(time_attr='num_examples', metric=config['tune']['discriminating_metric'],
+                                       mode=config['tune']['discriminating_metric_mode'],
+                                       max_t=config['tune']['max_t'])
+        return tune.run(TuneTrainable, config=config, scheduler=scheduler, search_alg=algo, num_samples=10,
+                        name=config['experiment_name'],
+                        resources_per_trial=config['tune']['resources_per_trial'],
+                        local_dir=config['tune']['working_dir'])
+
+    else:
+        raise NotImplementedError()
 
 
 if __name__ == '__main__':
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
-    tune_training(cfg.default_config)
+    print(tune_training(cfg.default_config))

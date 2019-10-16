@@ -4,10 +4,30 @@ from eval import Evaluation
 import torch
 import os
 
+def replace_value_in_nested_dict(node, kv, new_value):
+    if isinstance(node, list):
+        for i in node:
+            for x in replace_value_in_nested_dict(i, kv, new_value):
+               yield x
+    elif isinstance(node, dict):
+        if kv in node:
+            node[kv] = new_value
+            yield node[kv]
+        for j in node.values():
+            for x in replace_value_in_nested_dict(j, kv, new_value):
+                yield x
+
+def inject_tuned_hyperparameters(config):
+    for k in config.keys():
+        if k.split('|')[0] == 'replace':
+            list(replace_value_in_nested_dict(config, k.split('|')[1], config[k]))
+    return config
 
 class TuneTrainable(Trainable):
     def _setup(self, config):
+        inject_tuned_hyperparameters(config)
         os.chdir(os.path.dirname(os.path.realpath(__file__)))
+        print('Trainable got the following config after injection', config)
         self.config = config
         self.device = self.config['device']
         self.exp, self.model, self.train_dataloader, self.eval_dataloader = setup_training(self.config)

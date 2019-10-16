@@ -9,15 +9,14 @@ def get_model(input_size, config):
 class SimpleGRU(nn.Module):
     def __init__(self, input_size, config):
         super(SimpleGRU, self).__init__()
-        print('starting with hidden size', config['simple_gru']['hidden_size'])
-        self.embedding_layer = nn.Embedding(input_size, config['simple_gru']['embedding_size'], padding_idx=0, sparse=True)
-        self.rnn = nn.GRU(config['simple_gru']['embedding_size'], config['simple_gru']['hidden_size'],
-                          config['simple_gru']['num_layers'], dropout=config['simple_gru']['dropout'],
+        self.embedding_layer = nn.Embedding(input_size, int(config['simple_gru']['embedding_size']), padding_idx=0, sparse=True)
+        self.rnn = nn.GRU(int(config['simple_gru']['embedding_size']), int(config['simple_gru']['hidden_size']),
+                          int(config['simple_gru']['num_layers']), dropout=config['simple_gru']['dropout'],
                           bidirectional=config['simple_gru']['bidirectional'])
 
         self.output_all = config['penalize_all_steps']
         num_directions = 2 if config['simple_gru']['bidirectional'] else 1
-        self.output_scores = nn.Linear(in_features=num_directions*config['simple_gru']['hidden_size'],
+        self.output_scores = nn.Linear(in_features=num_directions*int(config['simple_gru']['hidden_size']),
                                        out_features=len(config['labels_to_int']))
 
     def get_non_sparse_parameters(self):
