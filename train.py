@@ -177,20 +177,18 @@ def tune_training(config):
                         local_dir=config['tune']['working_dir'])
 
     elif config['tune']['tuning_method'] == 'hyperopt':
-        space = {"replace|hidden_size": hp.quniform("replace|hidden_size", 64, 512, 2),
-                 "replace|embedding_size": hp.quniform("replace|embedding_size", 128, 1024, 2),
+        space = {"replace|hidden_size": hp.quniform("replace|hidden_size", 32, 700, 2),
+                 "replace|embedding_size": hp.quniform("replace|embedding_size", 32, 700, 2),
                  "replace|bidirectional": hp.choice("replace|bidirectional", [True, False]),
-                 "replace|num_layers": hp.quniform("replace|num_layers", 1, 5, 1),
-                 "replace|dropout": hp.loguniform("replace|dropout", -11, -0.8)}
-        algo = HyperOptSearch(space, max_concurrent=10, metric=config['tune']['discriminating_metric'],
-                              mode=config['tune']['discriminating_metric_mode'])
-        scheduler = HyperBandScheduler(time_attr='num_examples', metric=config['tune']['discriminating_metric'],
-                                       mode=config['tune']['discriminating_metric_mode'],
-                                       max_t=config['tune']['max_t'])
-        return tune.run(TuneTrainable, config=config, scheduler=scheduler, search_alg=algo, num_samples=10,
-                        name=config['experiment_name'],
+                 "replace|num_layers": hp.quniform("replace|num_layers", 1, 5, 1)}                 
+
+        algo = HyperOptSearch(space, max_concurrent=1, metric=config['tune']['discriminating_metric'],
+                              mode=config['tune']['discriminating_metric_mode'], n_initial_points=7, random_state_seed=42)
+
+        return tune.run(TuneTrainable, config=config, search_alg=algo, num_samples=config['tune']['n_samples'],
+                        name=config['experiment_name'], resume=False,
                         resources_per_trial=config['tune']['resources_per_trial'],
-                        local_dir=config['tune']['working_dir'])
+                        local_dir=config['tune']['working_dir'], stop={'num_examples': config['tune']['max_t']})
 
     else:
         raise NotImplementedError()
@@ -198,4 +196,4 @@ def tune_training(config):
 
 if __name__ == '__main__':
     os.chdir(os.path.dirname(os.path.realpath(__file__)))
-    print(tune_training(cfg.default_config))
+    analysis = tune_training(cfg.default_config)

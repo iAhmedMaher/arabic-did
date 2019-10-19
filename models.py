@@ -11,7 +11,7 @@ class SimpleGRU(nn.Module):
         super(SimpleGRU, self).__init__()
         self.embedding_layer = nn.Embedding(input_size, int(config['simple_gru']['embedding_size']), padding_idx=0, sparse=True)
         self.rnn = nn.GRU(int(config['simple_gru']['embedding_size']), int(config['simple_gru']['hidden_size']),
-                          int(config['simple_gru']['num_layers']), dropout=config['simple_gru']['dropout'],
+                          int(config['simple_gru']['num_layers']), dropout=abs(config['simple_gru']['dropout']),
                           bidirectional=config['simple_gru']['bidirectional'])
 
         self.output_all = config['penalize_all_steps']

@@ -32,6 +32,7 @@ class TuneTrainable(Trainable):
         self.device = self.config['device']
         self.exp, self.model, self.train_dataloader, self.eval_dataloader = setup_training(self.config)
         self.exp.set_name(config['experiment_name'] + self._experiment_id)
+        self.exp.send_notification(title='Experiment ' + str(self._experiment_id) + ' ended')
         self.train_data_iter = iter(self.train_dataloader)
         self.model = self.model.to(self.device)
         self.model.train()
@@ -68,9 +69,8 @@ class TuneTrainable(Trainable):
 
             if (self.batch_idx + 1) % self.config['training']['eval_every_n_batches'] == 0:
                 results = self.evaluator.eval_model(self.model)
-                for metric in results:
-                    print(metric, results[metric])
-                    self.exp.log_metric(metric, results[metric], step=self.num_examples, epoch=self.epoch)
+                print(results)
+                self.exp.log_metrics(results, step=self.num_examples, epoch=self.epoch)
 
                 training_results = {
                     self.config['tune']['discriminating_metric']: results[self.config['tune']['discriminating_metric']],
@@ -83,6 +83,7 @@ class TuneTrainable(Trainable):
         for i, optimizer in enumerate(self.optimizers):
             save_dict['op_' + str(i) + '_state_dict'] = optimizer.state_dict()
         torch.save(save_dict, os.path.join(checkpoint_dir, 'checkpoint_file.pt'))
+        return os.path.join(checkpoint_dir, 'checkpoint_file.pt')
 
     def _restore(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
