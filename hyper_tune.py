@@ -3,12 +3,14 @@ from train import setup_training, get_optimizers, training_step
 from eval import Evaluation
 import torch
 import os
+from average import EWMA
+
 
 def replace_value_in_nested_dict(node, kv, new_value):
     if isinstance(node, list):
         for i in node:
             for x in replace_value_in_nested_dict(i, kv, new_value):
-               yield x
+                yield x
     elif isinstance(node, dict):
         if kv in node:
             node[kv] = new_value
@@ -17,11 +19,13 @@ def replace_value_in_nested_dict(node, kv, new_value):
             for x in replace_value_in_nested_dict(j, kv, new_value):
                 yield x
 
+
 def inject_tuned_hyperparameters(config):
     for k in config.keys():
-        if k.split('|')[0] == 'replace':
+        if k.split('|')[0] == 'allocate':
             list(replace_value_in_nested_dict(config, k.split('|')[1], config[k]))
     return config
+
 
 class TuneTrainable(Trainable):
     def _setup(self, config):
@@ -30,7 +34,7 @@ class TuneTrainable(Trainable):
         print('Trainable got the following config after injection', config)
         self.config = config
         self.device = self.config['device']
-        self.exp, self.model, self.train_dataloader, self.eval_dataloader = setup_training(self.config)
+        self.exp, self.model, self.train_dataloader, self.eval_dataloader, self.loss_func = setup_training(self.config)
         self.exp.set_name(config['experiment_name'] + self._experiment_id)
         self.exp.send_notification(title='Experiment ' + str(self._experiment_id) + ' ended')
         self.train_data_iter = iter(self.train_dataloader)
@@ -41,6 +45,7 @@ class TuneTrainable(Trainable):
         self.num_examples = 0
         self.batch_idx = -1
         self.epoch = 1
+        self.ewma = EWMA(beta=0.5)
 
     def get_batch(self):
         try:
@@ -54,27 +59,43 @@ class TuneTrainable(Trainable):
             self.epoch += 1
             return batch
 
-
     def _train(self):
+        total_log_step_loss = 0
+        total_log_step_train_accu = 0
+
         while True:
             batch = self.get_batch()
             self.batch_idx += 1
             self.num_examples += len(batch[0])
             batch = (batch[0].to(self.device), batch[1].to(self.device))
-            loss = training_step(batch, self.model, self.optimizers)
+            loss, train_accu = training_step(batch, self.model, self.optimizers, self.loss_func)
+            total_log_step_loss += loss.cpu().detach().numpy()
+            total_log_step_train_accu += train_accu
 
             if self.batch_idx % self.config['training']['log_every_n_batches'] == 0:
-                print(self.num_examples, loss.detach().cpu().numpy())
-                self.exp.log_metric('train_loss', loss.detach().cpu().numpy(), step=self.num_examples, epoch=self.epoch)
+                avg_loss = total_log_step_loss / self.config['training']['log_every_n_batches']
+                avg_accu = total_log_step_train_accu / self.config['training']['log_every_n_batches']
+                print('Total number of seen examples:', self.num_examples, 'Average loss of current log step:',
+                      avg_loss, 'Average train accuracy of current log step:', avg_accu)
+                self.exp.log_metric('train_loss', avg_loss, step=self.num_examples, epoch=self.epoch)
+                self.exp.log_metric('train_accuracy', avg_accu, step=self.num_examples, epoch=self.epoch)
+                total_log_step_loss = 0
+                total_log_step_train_accu = 0
 
             if (self.batch_idx + 1) % self.config['training']['eval_every_n_batches'] == 0:
-                results = self.evaluator.eval_model(self.model)
-                print(results)
+                results, assets, image_fns = self.evaluator.eval_model(self.model, self.loss_func)
+                print(self.config['tune']['discriminating_metric'], results[self.config['tune']['discriminating_metric']])
                 self.exp.log_metrics(results, step=self.num_examples, epoch=self.epoch)
+                [self.exp.log_asset_data(asset, step=self.num_examples) for asset in assets]
+                [self.exp.log_image(fn, step=self.num_examples) for fn in image_fns]
+
+                accu_diff = abs(results[self.config['tune']['discriminating_metric']] - self.ewma.get())
+                no_change_in_accu = 1 if accu_diff < 0.004 else 0
+                self.ewma.update(results[self.config['tune']['discriminating_metric']])
 
                 training_results = {
                     self.config['tune']['discriminating_metric']: results[self.config['tune']['discriminating_metric']],
-                    'num_examples': self.num_examples}
+                    'num_examples': self.num_examples, 'no_change_in_accu' : no_change_in_accu}
 
                 return training_results
 
@@ -91,3 +112,10 @@ class TuneTrainable(Trainable):
 
         for i, optimizer in enumerate(self.optimizers):
             optimizer.load_state_dict(checkpoint['op_' + str(i) + '_state_dict'])
+
+    def stop(self):
+        results, assets, image_fns = self.evaluator.eval_model(self.model, self.loss_func, finished_training=True)
+        self.exp.log_metrics(results, step=self.num_examples, epoch=self.epoch)
+        [self.exp.log_asset_data(asset, step=self.num_examples) for asset in assets]
+        [self.exp.log_image(fn, step=self.num_examples) for fn in image_fns]
+        return super().stop()

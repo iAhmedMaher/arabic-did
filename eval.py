@@ -1,4 +1,8 @@
 import numpy as np
+import json
+import pandas as pd
+from cm_plotter import pretty_plot_confusion_matrix
+import uuid
 
 
 class Evaluation(object):
@@ -8,13 +12,18 @@ class Evaluation(object):
         self.device = config['device']
         self.labels_to_int = config['labels_to_int']
 
-    def eval_model(self, model):
+    def eval_model(self, model, loss_func, finished_training=False):
         print("Starting evaluation ...")
         model.eval()
         labels = []
         outputs = []
+        original_texts = []
+        processed_texts = []
 
         for idx, batch in enumerate(self.dataloader):
+            if finished_training:
+                original_texts += batch[2]
+                processed_texts += batch[3]
             batch = (batch[0].to(self.device), batch[1].to(self.device))
             labels_batch, tokens_batch = batch
             labels += [labels_batch]
@@ -22,25 +31,33 @@ class Evaluation(object):
 
         cm = self.get_confusion_matrix(labels, outputs)
 
-        results = {}
+        metrics = {}
+        assets = []
+        images_fns = []
 
         if 'per_class_precision' in self.metrics:
-            results.update(self.get_per_class_precision(cm))
+            metrics.update(self.get_per_class_precision(cm))
         if 'per_class_recall' in self.metrics:
-            results.update(self.get_per_class_recall(cm))
+            metrics.update(self.get_per_class_recall(cm))
         if 'per_class_f1' in self.metrics:
-            results.update(self.get_per_class_f1(cm))
+            metrics.update(self.get_per_class_f1(cm))
         if 'micro_average_accuracy' in self.metrics:
-            results.update(self.get_micro_average_accuracy(cm))
+            metrics.update(self.get_micro_average_accuracy(cm))
         if 'macro_average_precision' in self.metrics:
-            results.update(self.get_macro_precision(cm))
+            metrics.update(self.get_macro_precision(cm))
         if 'macro_average_recall' in self.metrics:
-            results.update(self.get_macro_recall(cm))
+            metrics.update(self.get_macro_recall(cm))
         if 'macro_average_f1' in self.metrics:
-            results.update(self.get_macro_f1(cm))
+            metrics.update(self.get_macro_f1(cm))
+        if 'eval_loss' in self.metrics:
+            metrics.update(self.get_eval_loss(outputs, labels, loss_func))
+        if 'in_out' in self.metrics and finished_training:
+            assets += self.get_text_y_yhat(outputs, labels, original_texts, processed_texts)
+        if 'cm' in self.metrics and finished_training:
+            images_fns += self.save_and_get_cm_image(cm)
 
         model.train()
-        return results
+        return metrics, assets, images_fns
 
 
     def get_confusion_matrix(self, labels, outputs):
@@ -60,18 +77,18 @@ class Evaluation(object):
     def get_per_class_precision(self, confusion_matrix):
         per_class_precision = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=0)
         result = {}
-        for idx, precision in enumerate(per_class_precision):
-            # TODO
-            result[list(self.labels_to_int.keys())[idx] + '_precision'] = precision
+
+        for label, int_label in self.labels_to_int.items():
+            result[label + '_precision'] = per_class_precision[int_label]
 
         return result
 
     def get_per_class_recall(self, confusion_matrix):
         per_class_recall = np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=1)
         result = {}
-        for idx, recall in enumerate(per_class_recall):
-            # TODO
-            result[list(self.labels_to_int.keys())[idx] + '_recall'] = recall
+
+        for label, int_label in self.labels_to_int.items():
+            result[label + '_recall'] = per_class_recall[int_label]
 
         return result
 
@@ -86,7 +103,7 @@ class Evaluation(object):
 
         return result
 
-    # This is also micro precision, micro recall, and micro f1 in case of multi-class classifcation
+    # This is also micro precision, micro recall, and micro f1 in case of multi-class classification
     def get_micro_average_accuracy(self, confusion_matrix):
         return {'micro_average_accuracy' : np.sum(np.diag(confusion_matrix)) / np.sum(confusion_matrix)}
 
@@ -101,9 +118,29 @@ class Evaluation(object):
         r = np.mean(np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=1))
         return {'macro_average_f1' : (2*p*r)/(p+r)}
 
+    def get_eval_loss(self, outputs, labels, loss_func):
+        loss_values = [loss_func(output[-1, :, :], label).cpu().detach().numpy() for output, label in zip(outputs, labels)]
+        return {'eval_loss' : np.mean(np.array(loss_values))}
 
+    def get_text_y_yhat(self, outputs, labels, original_texts, processed_texts):
+        labels_np = np.concatenate([label.cpu().detach().numpy() for label in labels], axis=0)
+        output_labels_np = np.concatenate([output.max(-1)[1].view(-1).cpu().detach().numpy() for output in outputs],
+                                          axis=0)
+        asset = []
 
+        for idx in range(len(original_texts)):
+            asset.append({'original_text' : original_texts[idx],
+                          'processed_texts' : processed_texts[idx],
+                          'y': list(self.labels_to_int.keys())[labels_np[idx]],
+                          'yhat': list(self.labels_to_int.keys())[output_labels_np[idx]]})
 
+        return [json.dumps(asset, ensure_ascii=False).encode('utf8')]
+
+    def save_and_get_cm_image(self, cm):
+        fname = './dump/cm' + uuid.uuid4().hex + '.png'
+        df_cm = pd.DataFrame(cm, list(self.labels_to_int.keys()),list(self.labels_to_int.keys()))
+        pretty_plot_confusion_matrix(fname, df_cm, pred_val_axis='x')
+        return [fname]
 
 
 
