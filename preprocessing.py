@@ -7,6 +7,7 @@ from helpers import get_datasets_paths
 import pandas as pd
 import numpy as np
 from collections import Counter
+from transformers import BertTokenizer
 
 # TODO: normalize arabic presentation forms
 
@@ -17,23 +18,33 @@ diacritics_re = re.compile(r'[\u064b-\u065f\u06d4-\u06ed\u08d5-\u08ff]')
 non_character_set_re = re.compile(r'[^\u0620-\u064a.!?,٬٫ ]+')
 numbers_re = re.compile(r'[0-9\u0660-\u0669]+')
 
+
+# TODO serious refactoring is needed after the addition of external tokenizers
 class TextPreprocessor(object):
     def __init__(self, config, return_text=False):
         self.labels_to_int = config['labels_to_int']
-        self.tokenization = config['preprocessing']['tokenization']
         self.normalize = config['preprocessing']['normalize']
         self.max_rep = config['preprocessing']['max_rep']
-        self.token2int_dict = self.get_char2int_dict() if self.tokenization == 'char' \
-            else self.get_word2int_dict(config)
+        self.max_allowed_seq = config['preprocessing']['max_seq_len']
         self.return_text = return_text
 
-    def get_num_tokens(self):
-        return len(self.token2int_dict)
+        if config['preprocessing']['tokenizer'] == 'standard_tokenizer':
+            self.tokenizer = self.standard_tokenizer
+            self.tokenization = config['standard_tokenizer']['tokenization']
+            self.token2int_dict = self.get_char2int_dict() if self.tokenization == 'char' \
+                else self.get_word2int_dict(config)
+            self.n_tokens = len(self.token2int_dict)
+
+        elif config['preprocessing']['tokenizer'] == 'transformers_tokenizer':
+            self.tokenizer = self.transformers_tokenizer
+            self.inner_tokenizer = BertTokenizer.from_pretrained(config['transformers_tokenizer']['pretrained'],
+                                                                 do_lower_case=False, do_basic_tokenize=False)
+            self.n_tokens = -1
 
     def get_char2int_dict(self):
-        all_chars = ' '.join([chr(c) for c in range(2**16)])
+        all_chars = ' '.join([chr(c) for c in range(2 ** 16)])
         all_possible_chars = self.tokenize_text(self.process_text(all_chars))
-        char2int = {'pad' : 0}  # ALERT: Padding assumes the zeroth place is pad
+        char2int = {'pad': 0}  # ALERT: Padding assumes the zeroth place is pad
         count = 1
         for c in all_possible_chars:
             if c not in char2int:
@@ -56,10 +67,10 @@ class TextPreprocessor(object):
             for row in text_lists:
                 all_words += self.tokenize_text(self.process_text(row))
             counts = Counter(all_words)
-            token_dict.update(dict(counts.most_common(int(config['preprocessing']['per_class_vocab_size']))))
+            token_dict.update(dict(counts.most_common(int(config['standard_tokenizer']['per_class_vocab_size']))))
 
         for idx, token in enumerate(token_dict):
-            token_dict[token] = idx + 1 # +1 because pad will be 0
+            token_dict[token] = idx + 1  # +1 because pad will be 0
 
         token_dict['pad'] = 0
         token_dict['oov'] = len(token_dict)
@@ -127,9 +138,10 @@ class TextPreprocessor(object):
 
     def standardize_tokens_length(self, int_tokenized_text, max_seq_len):
         if len(int_tokenized_text) > max_seq_len:
+            
             return int_tokenized_text[:max_seq_len]
 
-        return int_tokenized_text + [0] * (max_seq_len - len(int_tokenized_text))
+        return int_tokenized_text + [0] * (max_seq_len - len(int_tokenized_text))  # ALERT: assumes pad id is 0
 
     def token2int(self, token):
         try:
@@ -137,18 +149,31 @@ class TextPreprocessor(object):
         except KeyError:
             return self.token2int_dict['oov']
 
+    def standard_tokenizer(self, processed_texts):
+        tokenized_texts = [self.tokenize_text(text) for text in processed_texts]
+        int_tokenized_texts = [[self.token2int(c) for c in tokenized_text] for tokenized_text in tokenized_texts]
+        max_seq_len = min(self.max_allowed_seq,
+                          max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts]))
+        return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]
+
+    def transformers_tokenizer(self, processed_texts):
+        int_tokenized_texts =  [self.inner_tokenizer.prepare_for_model(self.inner_tokenizer.encode(processed_text), max_length=self.max_allowed_seq-2, add_special_tokens=True)['input_ids']
+                for processed_text in processed_texts]
+        max_seq_len = min(self.max_allowed_seq,
+                          max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts]))
+        return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]
+
     def __call__(self, batch):
         int_labels = [self.labels_to_int[pair[0]] for pair in batch]
         int_labels_tensor = torch.LongTensor(int_labels)
 
         original_texts = [pair[1] for pair in batch]
-        processed_texts = [self.process_text(text) for text  in original_texts]
-        tokenized_texts = [self.tokenize_text(text) for text in processed_texts]
-        int_tokenized_texts = [ [self.token2int(c) for c in tokenized_text] for tokenized_text in tokenized_texts]
-        max_seq_len = max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts])
-        int_tokenized_texts_tensor = torch.LongTensor([self.standardize_tokens_length(int_toks, max_seq_len)
-                                                       for int_toks in int_tokenized_texts])
-        int_tokenized_texts_tensor = int_tokenized_texts_tensor.permute(1,0) # Pytorch prefers sequence batches to be T, B, F
+        processed_texts = [self.process_text(text) for text in original_texts]
+
+        int_tokenized_texts_list = self.tokenizer(processed_texts)
+        int_tokenized_texts_tensor = torch.LongTensor(int_tokenized_texts_list)
+        int_tokenized_texts_tensor = int_tokenized_texts_tensor.permute(1,
+                                                                        0)  # Pytorch prefers sequence batches to be T, B, F
 
         if self.return_text:
             return int_labels_tensor, int_tokenized_texts_tensor, original_texts, processed_texts

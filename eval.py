@@ -3,6 +3,7 @@ import json
 import pandas as pd
 from cm_plotter import pretty_plot_confusion_matrix
 import uuid
+from tqdm import tqdm
 
 
 class Evaluation(object):
@@ -24,10 +25,11 @@ class Evaluation(object):
             if finished_training:
                 original_texts += batch[2]
                 processed_texts += batch[3]
-            batch = (batch[0].to(self.device), batch[1].to(self.device))
+
+            batch = (batch[0], batch[1].to(self.device))
             labels_batch, tokens_batch = batch
             labels += [labels_batch]
-            outputs += [model(tokens_batch)]
+            outputs += [model(tokens_batch).cpu().detach()]
 
         cm = self.get_confusion_matrix(labels, outputs)
 

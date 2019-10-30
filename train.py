@@ -73,10 +73,14 @@ def get_optimizers(model, config):
         non_sparse = optim.Adam(model.get_non_sparse_parameters(), lr=config['optimizer']['lr'],
                                 betas=config['optimizer']['betas'],
                                 eps=config['optimizer']['eps'])
-        sparse = optim.SparseAdam(model.get_sparse_parameters(), lr=config['optimizer']['lr'],
-                                  betas=config['optimizer']['betas'],
-                                  eps=config['optimizer']['eps'])
-        return non_sparse, sparse
+        sparse_params = model.get_sparse_parameters()
+        if len(sparse_params) == 0:
+            return [non_sparse]
+        else:
+            sparse = optim.SparseAdam(model.get_sparse_parameters(), lr=config['optimizer']['lr'],
+                                      betas=config['optimizer']['betas'],
+                                      eps=config['optimizer']['eps'])
+            return non_sparse, sparse
     else:
         raise NotImplementedError()
 
@@ -91,7 +95,7 @@ def setup_training(config):
     train_dataloader = get_train_dataloader(config, train_text_proc)
     eval_dataloader = get_eval_dataloader(config, eval_text_proc)
 
-    model = m.get_model(train_text_proc.get_num_tokens(), config)
+    model = m.get_model(train_text_proc.n_tokens, config)
 
     loss_func = nn.CrossEntropyLoss()
     return experiment, model, train_dataloader, eval_dataloader, loss_func
@@ -125,6 +129,7 @@ def normal_training(config):
 
 
 def training_step(training_batch, model, optimizers, loss_func):
+    model.train()
     [opt.zero_grad() for opt in optimizers]
     labels, tokens = training_batch
     outputs = model(tokens)
@@ -153,7 +158,7 @@ def tune_training(config):
     from hyperopt import hp
 
     ray.init()
-    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu' : 1}
+    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu' : 2} # TODO
     if config['tune']['tuning_method'] == 'bohb':
         config_space = CS.ConfigurationSpace(seed=42)
 
@@ -191,7 +196,7 @@ def tune_training(config):
                  "allocate|embedding_size": hp.quniform("embedding_size", 32, 700, 2),
                  "allocate|bidirectional": hp.choice("bidirectional", [True, False]),
                  "allocate|num_layers": hp.quniform("num_layers", 1, 5, 1),
-                 "allocate|per_class_vocab_size": hp.quniform("per_class_vocab_size", 500, 6000, 1),
+                 "allocate|penalize_all_steps": hp.choice("penalize_all_steps", [True, False])
                  }
 
         algo = HyperOptSearch(space, max_concurrent=1, metric=config['tune']['discriminating_metric'],
@@ -210,6 +215,12 @@ def tune_training(config):
 
         tune.run(TuneTrainable, config=config, search_alg=algo, num_samples=config['tune']['n_samples'],
                  scheduler=HyperOptFIFO(),
+                 name=config['experiment_name'], resume=False, checkpoint_at_end=False,
+                 resources_per_trial=config['tune']['resources_per_trial'],
+                 local_dir=config['tune']['working_dir'], stop=stop_dict)
+
+    elif config['tune']['tuning_method'] == 'no_search':
+        tune.run(TuneTrainable, config=config, num_samples=config['tune']['n_samples'],
                  name=config['experiment_name'], resume=False, checkpoint_at_end=False,
                  resources_per_trial=config['tune']['resources_per_trial'],
                  local_dir=config['tune']['working_dir'], stop=stop_dict)

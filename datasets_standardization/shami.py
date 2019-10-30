@@ -12,16 +12,17 @@ ensure_dir(os.path.join(shami_dir, 'eval'))
 ensure_dir(os.path.join(shami_dir, 'train'))
 ensure_dir(os.path.join(shami_dir, 'test'))
 
-file_label_tuple = [(r'..\datasets\Shami\syrian.txt', 'SYR'),
-                   (r'..\datasets\Shami\Palestinian.txt', 'PAL'),
-                   (r'..\datasets\Shami\Lebanees.txt', 'LEB'),
-                   (r'..\datasets\Shami\jordinian.txt', 'JOR')]
+file_label_tuple = [(os.path.join(shami_dir, 'syrian.txt'), 'SYR'),
+                   (os.path.join(shami_dir, 'Palestinian.txt'), 'PAL'),
+                   (os.path.join(shami_dir, 'Lebanees.txt'), 'LEB'),
+                   (os.path.join(shami_dir, 'jordinian.txt'), 'JOR')]
 
 shami_list = []
 for file, label in file_label_tuple:
     with open(file, 'r', encoding='utf8') as f:
         for line in f:
-            shami_list += [label, line.rstrip()]
+            if line.rstrip() != '':
+                shami_list += [label, line.rstrip()]
 
 df = pd.DataFrame(np.array(shami_list).reshape(-1,2), columns=['label', 'text'])
 df.index.name = 'id'

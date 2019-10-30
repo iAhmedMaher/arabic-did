@@ -4,6 +4,8 @@ from eval import Evaluation
 import torch
 import os
 from average import EWMA
+from colorama import Fore
+from colorama import Style
 
 
 def replace_value_in_nested_dict(node, kv, new_value):
@@ -43,7 +45,7 @@ class TuneTrainable(Trainable):
         self.optimizers = get_optimizers(self.model, self.config)
         self.evaluator = Evaluation(self.eval_dataloader, self.config)
         self.num_examples = 0
-        self.batch_idx = -1
+        self.batch_idx = 0
         self.epoch = 1
         self.ewma = EWMA(beta=0.5)
 
@@ -55,7 +57,7 @@ class TuneTrainable(Trainable):
         except StopIteration:
             self.train_data_iter = iter(self.train_dataloader)
             batch = next(self.train_data_iter)
-            self.batch_idx = -1
+            self.batch_idx = 0
             self.epoch += 1
             return batch
 
@@ -75,8 +77,8 @@ class TuneTrainable(Trainable):
             if self.batch_idx % self.config['training']['log_every_n_batches'] == 0:
                 avg_loss = total_log_step_loss / self.config['training']['log_every_n_batches']
                 avg_accu = total_log_step_train_accu / self.config['training']['log_every_n_batches']
-                print('Total number of seen examples:', self.num_examples, 'Average loss of current log step:',
-                      avg_loss, 'Average train accuracy of current log step:', avg_accu)
+                print(f'{Fore.YELLOW}Total number of seen examples:', self.num_examples, 'Average loss of current log step:',
+                      avg_loss, 'Average train accuracy of current log step:', avg_accu, f"{Style.RESET_ALL}")
                 self.exp.log_metric('train_loss', avg_loss, step=self.num_examples, epoch=self.epoch)
                 self.exp.log_metric('train_accuracy', avg_accu, step=self.num_examples, epoch=self.epoch)
                 total_log_step_loss = 0
