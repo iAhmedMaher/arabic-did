@@ -57,7 +57,7 @@ def get_eval_dataloader(config, transformer):
     global eval_dataset
 
     if eval_dataset is None:
-        eval_paths = get_datasets_paths(config, 'eval')
+        eval_paths = get_datasets_paths(config, 'test')
         eval_dataset = data.CSVDatasetsMerger(eval_paths)
 
     return DataLoader(eval_dataset,
@@ -74,7 +74,7 @@ def get_optimizers(model, config):
                                 betas=config['optimizer']['betas'],
                                 eps=config['optimizer']['eps'])
         sparse_params = model.get_sparse_parameters()
-        if len(sparse_params) == 0:
+        if len(list(sparse_params)) == 0:
             return [non_sparse]
         else:
             sparse = optim.SparseAdam(model.get_sparse_parameters(), lr=config['optimizer']['lr'],
