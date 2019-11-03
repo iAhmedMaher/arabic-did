@@ -8,6 +8,8 @@ import pandas as pd
 import numpy as np
 from collections import Counter
 from transformers import BertTokenizer
+from colorama import Fore
+from colorama import Style
 
 # TODO: normalize arabic presentation forms
 
@@ -113,13 +115,18 @@ class TextPreprocessor(object):
 
     # TODO allow removing punctuation
     def process_text(self, text):
-        text = self.clean_text(text)
-        if self.normalize:
-            text = self.normalize_arabic(text)
-        if self.max_rep != 0:
-            text = self.set_max_rep(text, self.max_rep)
+        try:
+            text = self.clean_text(text)
+            if self.normalize:
+                text = self.normalize_arabic(text)
+            if self.max_rep != 0:
+                text = self.set_max_rep(text, self.max_rep)
 
-        return text
+            return text
+        except TypeError:
+            print(
+                f'{Fore.RED}Text processor got empty text midst cleaning. Please clean the dataset properly. Returning فارغ ... {Style.RESET_ALL}')
+            return "فارغ"
 
     def tokenize_text(self, text):
         if self.tokenization == 'char':
@@ -138,7 +145,6 @@ class TextPreprocessor(object):
 
     def standardize_tokens_length(self, int_tokenized_text, max_seq_len):
         if len(int_tokenized_text) > max_seq_len:
-            
             return int_tokenized_text[:max_seq_len]
 
         return int_tokenized_text + [0] * (max_seq_len - len(int_tokenized_text))  # ALERT: assumes pad id is 0
@@ -157,8 +163,10 @@ class TextPreprocessor(object):
         return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]
 
     def transformers_tokenizer(self, processed_texts):
-        int_tokenized_texts =  [self.inner_tokenizer.prepare_for_model(self.inner_tokenizer.encode(processed_text), max_length=self.max_allowed_seq-2, add_special_tokens=True)['input_ids']
-                for processed_text in processed_texts]
+        int_tokenized_texts = [self.inner_tokenizer.prepare_for_model(self.inner_tokenizer.encode(processed_text),
+                                                                      max_length=self.max_allowed_seq - 2,
+                                                                      add_special_tokens=True)['input_ids']
+                               for processed_text in processed_texts]
         max_seq_len = min(self.max_allowed_seq,
                           max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts]))
         return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]

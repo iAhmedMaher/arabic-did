@@ -28,9 +28,9 @@ df = pd.DataFrame(np.array(shami_list).reshape(-1,2), columns=['label', 'text'])
 df.index.name = 'id'
 df = df.sample(frac=1).reset_index(drop=True)
 df.index.name = 'id'
-train_size = len(df)*0.7
-eval_size = len(df)*0.15
-test_size = len(df)*0.15
+train_size = len(df)*0.6
+eval_size = len(df)*0.2
+test_size = len(df)*0.2
 
 current = 0
 

@@ -7,17 +7,18 @@ np.random.seed(42)
 torch.manual_seed(42)
 torch.manual_seed(42)
 
+
 default_config = {
     'comet_api_key_file_path': './comet_api_key.txt',
     'device': 'cuda',
-    'experiment_name': 'test-char-lstm',
-    'comet_project_name': 'arabic-did',
+    'experiment_name': 'char-lstm',
+    'comet_project_name': 'arabic-did-debug',
     'datasets_dir': r'../datasets',
     'datasets': ['Shami'],
     'training': {'train_batch_size': 128, 'n_train_workers': 8, 'log_every_n_batches': 10,
-                 'training_epochs': 15, 'eval_every_n_batches': 100},
-    'tune': {'tuning_method': 'hyperopt', 'discriminating_metric': 'micro_average_accuracy',
-             'discriminating_metric_mode': 'max', 'max_t': 250000, 'n_samples': 100000,
+                 'training_epochs': 15, 'eval_every_n_batches': 100, 'shuffle_train_eval' : True},
+    'tune': {'tuning_method': 'no_search', 'discriminating_metric': 'micro_average_accuracy',
+             'discriminating_metric_mode': 'max', 'max_t': 250000, 'n_samples': 1,
              'resources_per_trial': {'cpu': 2, 'gpu': 1}, 'working_dir': '../ray', 'resume': True},
     'evaluation': {'metrics': ['per_class_precision', 'per_class_recall', 'per_class_f1', 'micro_average_accuracy',
                                'macro_average_precision', 'macro_average_recall', 'macro_average_f1', 'eval_loss', 'in_out', 'cm'],

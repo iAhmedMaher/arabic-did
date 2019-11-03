@@ -16,9 +16,14 @@ import random
 from helpers import get_datasets_paths
 from colorama import Fore
 from colorama import Style
+from helpers import get_combined_dataframes
+from sklearn.model_selection import train_test_split
 
+# TODO refactor having two modes of loading
 train_dataset = None
 eval_dataset = None
+
+train_eval_pd = None
 
 
 def flatten_dict(d, parent_key='', sep='_'):
@@ -57,7 +62,7 @@ def get_eval_dataloader(config, transformer):
     global eval_dataset
 
     if eval_dataset is None:
-        eval_paths = get_datasets_paths(config, 'test')
+        eval_paths = get_datasets_paths(config, 'eval')
         eval_dataset = data.CSVDatasetsMerger(eval_paths)
 
     return DataLoader(eval_dataset,
@@ -66,6 +71,31 @@ def get_eval_dataloader(config, transformer):
                       drop_last=False,
                       num_workers=config['evaluation']['n_eval_workers'],
                       collate_fn=transformer)
+
+def get_shuffled_train_eval(config, train_transformer, eval_transformer):
+    global train_eval_pd
+    if train_eval_pd is None:
+        paths = get_datasets_paths(config, 'train') + get_datasets_paths(config, 'eval')
+        train_eval_pd = get_combined_dataframes(paths)
+
+    new_train_eval_pd = train_eval_pd.copy()
+    train_df, eval_df = train_test_split(new_train_eval_pd, shuffle=True, test_size=0.2)
+
+    train_dataloader = DataLoader(data.PandasDataset(train_df),
+                      batch_size=config['training']['train_batch_size'],
+                      shuffle=True,
+                      drop_last=False,
+                      num_workers=config['training']['n_train_workers'],
+                      collate_fn=train_transformer)
+
+    eval_dataloader = DataLoader(data.PandasDataset(eval_df),
+                      batch_size=config['evaluation']['eval_batch_size'],
+                      shuffle=False,
+                      drop_last=False,
+                      num_workers=config['evaluation']['n_eval_workers'],
+                      collate_fn=eval_transformer)
+
+    return train_dataloader, eval_dataloader
 
 
 def get_optimizers(model, config):
@@ -92,8 +122,11 @@ def setup_training(config):
     train_text_proc = TextPreprocessor(config)
     eval_text_proc = TextPreprocessor(config, return_text=True)
 
-    train_dataloader = get_train_dataloader(config, train_text_proc)
-    eval_dataloader = get_eval_dataloader(config, eval_text_proc)
+    if config['training']['shuffle_train_eval']:
+        train_dataloader, eval_dataloader = get_shuffled_train_eval(config, train_text_proc, eval_text_proc)
+    else:
+        train_dataloader = get_train_dataloader(config, train_text_proc)
+        eval_dataloader = get_eval_dataloader(config, eval_text_proc)
 
     model = m.get_model(train_text_proc.n_tokens, config)
 
