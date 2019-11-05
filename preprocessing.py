@@ -10,6 +10,9 @@ from collections import Counter
 from transformers import BertTokenizer
 from colorama import Fore
 from colorama import Style
+import youtokentome as yttm
+import os
+import uuid
 
 # TODO: normalize arabic presentation forms
 
@@ -23,7 +26,7 @@ numbers_re = re.compile(r'[0-9\u0660-\u0669]+')
 
 # TODO serious refactoring is needed after the addition of external tokenizers
 class TextPreprocessor(object):
-    def __init__(self, config, return_text=False):
+    def __init__(self, config, train_df, return_text=False):
         self.labels_to_int = config['labels_to_int']
         self.normalize = config['preprocessing']['normalize']
         self.max_rep = config['preprocessing']['max_rep']
@@ -34,14 +37,27 @@ class TextPreprocessor(object):
             self.tokenizer = self.standard_tokenizer
             self.tokenization = config['standard_tokenizer']['tokenization']
             self.token2int_dict = self.get_char2int_dict() if self.tokenization == 'char' \
-                else self.get_word2int_dict(config)
+                else self.get_word2int_dict(config, train_df)
             self.n_tokens = len(self.token2int_dict)
+
+        elif config['preprocessing']['tokenizer'] == 'youtokentome':
+            self.bpe_model = self.get_bpe_model(config, train_df)
+            self.tokenizer = self.youtokentome_tokenizer
+            self.n_tokens = self.bpe_model.vocab_size()
 
         elif config['preprocessing']['tokenizer'] == 'transformers_tokenizer':
             self.tokenizer = self.transformers_tokenizer
             self.inner_tokenizer = BertTokenizer.from_pretrained(config['transformers_tokenizer']['pretrained'],
                                                                  do_lower_case=False, do_basic_tokenize=False)
             self.n_tokens = -1
+
+    def youtokentome_tokenizer(self, processed_texts):
+        int_tokenized_texts = [self.bpe_model.encode(processed_text, output_type=yttm.OutputType.ID)
+                               for processed_text in processed_texts]
+
+        max_seq_len = min(self.max_allowed_seq,
+                          max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts]))
+        return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]
 
     def get_char2int_dict(self):
         all_chars = ' '.join([chr(c) for c in range(2 ** 16)])
@@ -55,16 +71,10 @@ class TextPreprocessor(object):
         return char2int
 
     # TODO allow different word tokenization techniques
-    def get_word2int_dict(self, config):
-        csv_paths_list = get_datasets_paths(config, 'train')
-        combined_dataset = None
-        for csv_path in csv_paths_list:
-            current_dataset = pd.read_csv(csv_path, index_col='id')
-            combined_dataset = pd.concat([combined_dataset, current_dataset], axis=0)
-
+    def get_word2int_dict(self, config, train_df):
         token_dict = {}
         for label in self.labels_to_int.keys():
-            text_lists = list(combined_dataset[combined_dataset.label == label]['text'])
+            text_lists = list(train_df[train_df.label == label]['text'])
             all_words = []
             for row in text_lists:
                 all_words += self.tokenize_text(self.process_text(row))
@@ -75,9 +85,27 @@ class TextPreprocessor(object):
             token_dict[token] = idx + 1  # +1 because pad will be 0
 
         token_dict['pad'] = 0
-        token_dict['oov'] = len(token_dict)
+        token_dict['unk'] = len(token_dict)
 
         return token_dict
+
+    def get_bpe_model(self, config, train_df):
+        uuid_chosen = uuid.uuid4().hex
+        text_lists = list(train_df['text'])
+        processed_text = ""
+        for row in text_lists:
+            processed_text += self.process_text(row) + ' '
+
+        with open(os.path.join('dump', uuid_chosen + 'youtokentome_train.txt'), 'w', encoding='utf8') as f:
+            f.writelines(processed_text)
+
+        model_path = os.path.join('dump', uuid_chosen + 'youtokentome_train.model')
+        yttm.BPE.train(data=os.path.join('dump', uuid_chosen + 'youtokentome_train.txt'),
+                       vocab_size=config['youtokentome']['vocab_size'],
+                       model=model_path,
+                       pad_id=0)
+
+        return yttm.BPE(model=model_path)
 
     def clean_text(self, text):
         text = username_re.sub('الشخص', text)
@@ -153,7 +181,7 @@ class TextPreprocessor(object):
         try:
             return self.token2int_dict[token]
         except KeyError:
-            return self.token2int_dict['oov']
+            return self.token2int_dict['unk']
 
     def standard_tokenizer(self, processed_texts):
         tokenized_texts = [self.tokenize_text(text) for text in processed_texts]

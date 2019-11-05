@@ -43,36 +43,26 @@ def get_comet_api_key(config):
         return f.readline().rstrip()
 
 
-def get_train_dataloader(config, transformer):
+def get_train_dataloader(config):
     global train_dataset
 
     if train_dataset is None:
         train_paths = get_datasets_paths(config, 'train')
         train_dataset = data.CSVDatasetsMerger(train_paths)
 
-    return DataLoader(train_dataset,
-                      batch_size=config['training']['train_batch_size'],
-                      shuffle=True,
-                      drop_last=False,
-                      num_workers=config['training']['n_train_workers'],
-                      collate_fn=transformer)
+    return train_dataset
 
 
-def get_eval_dataloader(config, transformer):
+def get_eval_dataloader(config):
     global eval_dataset
 
     if eval_dataset is None:
         eval_paths = get_datasets_paths(config, 'eval')
         eval_dataset = data.CSVDatasetsMerger(eval_paths)
 
-    return DataLoader(eval_dataset,
-                      batch_size=config['evaluation']['eval_batch_size'],
-                      shuffle=False,
-                      drop_last=False,
-                      num_workers=config['evaluation']['n_eval_workers'],
-                      collate_fn=transformer)
+    return eval_dataset
 
-def get_shuffled_train_eval(config, train_transformer, eval_transformer):
+def get_shuffled_train_eval(config):
     global train_eval_pd
     if train_eval_pd is None:
         paths = get_datasets_paths(config, 'train') + get_datasets_paths(config, 'eval')
@@ -81,21 +71,7 @@ def get_shuffled_train_eval(config, train_transformer, eval_transformer):
     new_train_eval_pd = train_eval_pd.copy()
     train_df, eval_df = train_test_split(new_train_eval_pd, shuffle=True, test_size=0.2)
 
-    train_dataloader = DataLoader(data.PandasDataset(train_df),
-                      batch_size=config['training']['train_batch_size'],
-                      shuffle=True,
-                      drop_last=False,
-                      num_workers=config['training']['n_train_workers'],
-                      collate_fn=train_transformer)
-
-    eval_dataloader = DataLoader(data.PandasDataset(eval_df),
-                      batch_size=config['evaluation']['eval_batch_size'],
-                      shuffle=False,
-                      drop_last=False,
-                      num_workers=config['evaluation']['n_eval_workers'],
-                      collate_fn=eval_transformer)
-
-    return train_dataloader, eval_dataloader
+    return data.PandasDataset(train_df), data.PandasDataset(eval_df)
 
 
 def get_optimizers(model, config):
@@ -119,14 +95,30 @@ def setup_training(config):
     experiment = Experiment(get_comet_api_key(config), project_name=config['comet_project_name'], log_code=True)
     experiment.log_parameters(flatten_dict(config))
 
-    train_text_proc = TextPreprocessor(config)
-    eval_text_proc = TextPreprocessor(config, return_text=True)
-
     if config['training']['shuffle_train_eval']:
-        train_dataloader, eval_dataloader = get_shuffled_train_eval(config, train_text_proc, eval_text_proc)
+        train_ds, eval_ds = get_shuffled_train_eval(config)
     else:
-        train_dataloader = get_train_dataloader(config, train_text_proc)
-        eval_dataloader = get_eval_dataloader(config, eval_text_proc)
+        train_ds = get_train_dataloader(config)
+        eval_ds = get_eval_dataloader(config)
+
+    train_df = train_ds.get_pandas_df()
+
+    train_text_proc = TextPreprocessor(config, train_df)
+    eval_text_proc = TextPreprocessor(config, train_df, return_text=True)
+
+    train_dataloader = DataLoader(train_ds,
+                                  batch_size=config['training']['train_batch_size'],
+                                  shuffle=True,
+                                  drop_last=False,
+                                  num_workers=config['training']['n_train_workers'],
+                                  collate_fn=train_text_proc)
+
+    eval_dataloader = DataLoader(eval_ds,
+                                 batch_size=config['evaluation']['eval_batch_size'],
+                                 shuffle=False,
+                                 drop_last=False,
+                                 num_workers=config['evaluation']['n_eval_workers'],
+                                 collate_fn=eval_text_proc)
 
     model = m.get_model(train_text_proc.n_tokens, config)
 
@@ -191,7 +183,7 @@ def tune_training(config):
     from hyperopt import hp
 
     ray.init()
-    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu' : 2} # TODO
+    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu' : 1} # TODO
     if config['tune']['tuning_method'] == 'bohb':
         config_space = CS.ConfigurationSpace(seed=42)
 

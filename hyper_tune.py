@@ -47,7 +47,8 @@ class TuneTrainable(Trainable):
         self.num_examples = 0
         self.batch_idx = 0
         self.epoch = 1
-        self.ewma = EWMA(beta=0.5)
+        self.ewma = EWMA(beta=0.75)
+        self.last_accu = -1.0
 
     def get_batch(self):
         try:
@@ -91,9 +92,12 @@ class TuneTrainable(Trainable):
                 [self.exp.log_asset_data(asset, step=self.num_examples) for asset in assets]
                 [self.exp.log_image(fn, step=self.num_examples) for fn in image_fns]
 
-                accu_diff = abs(results[self.config['tune']['discriminating_metric']] - self.ewma.get())
-                no_change_in_accu = 1 if accu_diff < 0.004 else 0
+                accu_diff_avg = abs(results[self.config['tune']['discriminating_metric']] - self.ewma.get())
+                accu_diff_cons = abs(results[self.config['tune']['discriminating_metric']] - self.last_accu)
+
+                no_change_in_accu = 1 if accu_diff_avg < 0.0005 and accu_diff_cons < 0.002 else 0
                 self.ewma.update(results[self.config['tune']['discriminating_metric']])
+                self.last_accu = results[self.config['tune']['discriminating_metric']]
 
                 training_results = {
                     self.config['tune']['discriminating_metric']: results[self.config['tune']['discriminating_metric']],

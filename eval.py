@@ -4,6 +4,7 @@ import pandas as pd
 from cm_plotter import pretty_plot_confusion_matrix
 import uuid
 from tqdm import tqdm
+import os
 
 
 class Evaluation(object):
@@ -139,7 +140,7 @@ class Evaluation(object):
         return [json.dumps(asset, ensure_ascii=False).encode('utf8')]
 
     def save_and_get_cm_image(self, cm):
-        fname = './dump/cm' + uuid.uuid4().hex + '.png'
+        fname = os.path.join('dump', 'cm' + uuid.uuid4().hex + '.png')
         df_cm = pd.DataFrame(cm, list(self.labels_to_int.keys()),list(self.labels_to_int.keys()))
         pretty_plot_confusion_matrix(fname, df_cm, pred_val_axis='x')
         return [fname]

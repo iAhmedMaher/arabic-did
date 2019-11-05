@@ -3,6 +3,8 @@ import pandas as pd
 import config as cfg
 from helpers import get_combined_dataframes
 
+# TODO refactor
+
 class CSVDatasetsMerger(Dataset):
     """
     Assumes all datasets are standardized
@@ -17,6 +19,9 @@ class CSVDatasetsMerger(Dataset):
         item = self.combined_dataset.iloc[idx, :]
         label, text = item['label'], item['text']
         return label, text
+
+    def get_pandas_df(self):
+        return self.combined_dataset
 
 
 class PandasDataset(Dataset):
@@ -33,6 +38,9 @@ class PandasDataset(Dataset):
         item = self.pandas_df.iloc[idx, :]
         label, text = item['label'], item['text']
         return label, text
+
+    def get_pandas_df(self):
+        return self.pandas_df
 
 
 
