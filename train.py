@@ -9,7 +9,6 @@ from preprocessing import TextPreprocessor
 import config as cfg
 import models as m
 import torch
-import collections
 from eval import Evaluation
 import numpy as np
 import random
@@ -24,17 +23,6 @@ train_dataset = None
 eval_dataset = None
 
 train_eval_pd = None
-
-
-def flatten_dict(d, parent_key='', sep='_'):
-    items = []
-    for k, v in d.items():
-        new_key = parent_key + sep + k if parent_key else k
-        if isinstance(v, collections.MutableMapping):
-            items.extend(flatten_dict(v, new_key, sep=sep).items())
-        else:
-            items.append((new_key, v))
-    return dict(items)
 
 
 def get_comet_api_key(config):
@@ -93,7 +81,6 @@ def get_optimizers(model, config):
 
 def setup_training(config):
     experiment = Experiment(get_comet_api_key(config), project_name=config['comet_project_name'], log_code=True)
-    experiment.log_parameters(flatten_dict(config))
 
     if config['training']['shuffle_train_eval']:
         train_ds, eval_ds = get_shuffled_train_eval(config)
@@ -122,10 +109,9 @@ def setup_training(config):
 
     model = m.get_model(train_text_proc.n_tokens, config)
 
-    loss_func = nn.CrossEntropyLoss()
-    return experiment, model, train_dataloader, eval_dataloader, loss_func
+    return experiment, model, train_dataloader, eval_dataloader
 
-
+# TODO DEPRECATED (won't work)
 def normal_training(config):
     device = torch.device(config['device'])
     print('Using device', device)
@@ -153,17 +139,12 @@ def normal_training(config):
                     exp.log_metric(metric, results[metric], step=num_examples, epoch=epoch)
 
 
-def training_step(training_batch, model, optimizers, loss_func):
+def training_step(training_batch, model, optimizers):
     model.train()
     [opt.zero_grad() for opt in optimizers]
     labels, tokens = training_batch
-    outputs = model(tokens)
-    chosen_label = torch.argmax(outputs[-1, :, :], dim=1)
-    train_accuracy = chosen_label[chosen_label == labels].nelement()/labels.nelement()
-    output_len, classes = outputs.size()[0], outputs.size()[2]
-    outputs = outputs.view(-1, classes)
-    labels = labels.repeat(output_len)
-    loss = loss_func(outputs, labels)
+    predicted_labels, loss = model(tokens, labels)
+    train_accuracy = predicted_labels[predicted_labels == labels].nelement()/labels.nelement()
     loss.backward()
     [opt.step() for opt in optimizers]
     return loss, train_accuracy

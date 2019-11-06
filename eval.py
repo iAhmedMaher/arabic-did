@@ -14,11 +14,12 @@ class Evaluation(object):
         self.device = config['device']
         self.labels_to_int = config['labels_to_int']
 
-    def eval_model(self, model, loss_func, finished_training=False):
+    def eval_model(self, model, finished_training=False):
         print("Starting evaluation ...")
         model.eval()
         labels = []
-        outputs = []
+        predicted_labels = []
+        eval_losses = []
         original_texts = []
         processed_texts = []
 
@@ -27,12 +28,14 @@ class Evaluation(object):
                 original_texts += batch[2]
                 processed_texts += batch[3]
 
-            batch = (batch[0], batch[1].to(self.device))
+            batch = (batch[0].to(self.device), batch[1].to(self.device))
             labels_batch, tokens_batch = batch
-            labels += [labels_batch]
-            outputs += [model(tokens_batch).cpu().detach()]
+            predicted_labels_batch, eval_loss_batch = model(tokens_batch, labels_batch)
+            eval_losses += [eval_loss_batch.cpu().detach()]
+            predicted_labels += [predicted_labels_batch.cpu().detach()]
+            labels += [labels_batch.cpu().detach()]
 
-        cm = self.get_confusion_matrix(labels, outputs)
+        cm = self.get_confusion_matrix(labels, predicted_labels)
 
         metrics = {}
         assets = []
@@ -53,9 +56,9 @@ class Evaluation(object):
         if 'macro_average_f1' in self.metrics:
             metrics.update(self.get_macro_f1(cm))
         if 'eval_loss' in self.metrics:
-            metrics.update(self.get_eval_loss(outputs, labels, loss_func))
+            metrics.update({'eval_loss' : np.mean(np.array(eval_losses))})
         if 'in_out' in self.metrics and finished_training:
-            assets += self.get_text_y_yhat(outputs, labels, original_texts, processed_texts)
+            assets += self.get_text_y_yhat(predicted_labels, labels, original_texts, processed_texts)
         if 'cm' in self.metrics and finished_training:
             images_fns += self.save_and_get_cm_image(cm)
 
@@ -63,9 +66,9 @@ class Evaluation(object):
         return metrics, assets, images_fns
 
 
-    def get_confusion_matrix(self, labels, outputs):
-        labels_np = np.concatenate([label.cpu().detach().numpy() for label in labels], axis=0)
-        output_labels_np = np.concatenate([output.max(-1)[1].view(-1).cpu().detach().numpy() for output in outputs], axis=0)
+    def get_confusion_matrix(self, labels, predicted_labels):
+        labels_np = np.concatenate([label.numpy() for label in labels], axis=0)
+        output_labels_np = np.concatenate([predicted_label.numpy() for predicted_label in predicted_labels], axis=0)
 
         n_classes = len(self.labels_to_int)
         confusion_matrix = np.zeros((n_classes, n_classes))
@@ -121,14 +124,9 @@ class Evaluation(object):
         r = np.mean(np.diag(confusion_matrix) / np.sum(confusion_matrix, axis=1))
         return {'macro_average_f1' : (2*p*r)/(p+r)}
 
-    def get_eval_loss(self, outputs, labels, loss_func):
-        loss_values = [loss_func(output[-1, :, :], label).cpu().detach().numpy() for output, label in zip(outputs, labels)]
-        return {'eval_loss' : np.mean(np.array(loss_values))}
-
-    def get_text_y_yhat(self, outputs, labels, original_texts, processed_texts):
-        labels_np = np.concatenate([label.cpu().detach().numpy() for label in labels], axis=0)
-        output_labels_np = np.concatenate([output.max(-1)[1].view(-1).cpu().detach().numpy() for output in outputs],
-                                          axis=0)
+    def get_text_y_yhat(self, predicted_labels, labels, original_texts, processed_texts):
+        labels_np = np.concatenate([label.numpy() for label in labels], axis=0)
+        output_labels_np = np.concatenate([predicted_label.numpy() for predicted_label in predicted_labels], axis=0)
         asset = []
 
         for idx in range(len(original_texts)):
