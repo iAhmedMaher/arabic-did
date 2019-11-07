@@ -66,14 +66,14 @@ def get_optimizers(model, config):
     if config['optimizer']['name'] == 'adam':
         non_sparse = optim.Adam(model.get_non_sparse_parameters(), lr=config['optimizer']['lr'],
                                 betas=config['optimizer']['betas'],
-                                eps=config['optimizer']['eps'])
+                                eps=config['optimizer']['eps'], weight_decay=config['optimizer']['weight_decay'])
         sparse_params = model.get_sparse_parameters()
         if len(list(sparse_params)) == 0:
             return [non_sparse]
         else:
             sparse = optim.SparseAdam(model.get_sparse_parameters(), lr=config['optimizer']['lr'],
                                       betas=config['optimizer']['betas'],
-                                      eps=config['optimizer']['eps'])
+                                      eps=config['optimizer']['eps'], weight_decay=config['optimizer']['weight_decay'])
             return non_sparse, sparse
     else:
         raise NotImplementedError()
@@ -191,6 +191,37 @@ def tune_training(config):
                         local_dir=config['tune']['working_dir'])
 
     elif config['tune']['tuning_method'] == 'hyperopt':
+        def get_hyperopt_space(config):
+            if config['model'] == 'simple_lstm':
+                return {"allocate|hidden_size": hp.quniform("hidden_size", 32, 700, 2),
+                        "allocate|embedding_size": hp.quniform("embedding_size", 32, 700, 2),
+                        "allocate|bidirectional": hp.choice("bidirectional", [True, False]),
+                        "allocate|num_layers": hp.quniform("num_layers", 1, 5, 1),
+                        "allocate|penalize_all_steps": hp.choice("penalize_all_steps", [True, False])
+                        }
+            elif config['model'] == 'awd_rnn':
+                return {"allocate|hidden_size": hp.quniform("hidden_size", 32, 1024, 4),
+                        "allocate|embedding_size": hp.quniform("embedding_size", 32, 1024, 4),
+                        "allocate|num_layers": hp.quniform("num_layers", 1, 6, 1),
+                        "allocate|penalize_all_steps": hp.choice("penalize_all_steps", [True, False]),
+                        "allocate|dropout": hp.normal("dropout", 0.3, 0.2),
+                        "allocate|dropouth": hp.normal("dropouth", 0.3, 0.2),
+                        "allocate|dropouti": hp.normal("dropouti", 0.3, 0.2),
+                        "allocate|dropoute": hp.normal("dropoute", 0.0, 0.13),
+                        #"allocate|wdrop": hp.normal("wdrop", 0.0, 0.1),
+                        "allocate|ar_alpha": hp.normal("ar_alpha", 2, 3),
+                        "allocate|weight_decay": hp.lognormal("weight_decay", -13, 5),
+                        "allocate|lr": hp.lognormal('lr', -6, 1),
+                        "nested|tokens_config": hp.choice('tokens_config', [
+                            {'allocate|tokenizer':'standard_tokenizer', 'nested|tokenization_method':hp.choice('tokenization_method', [
+                                {'allocate|tokenization' : 'char'},
+                                {'allocate|tokenization' : 'word', 'allocate|per_class_vocab_size' : hp.uniform('per_class_vocab_size', 1000, 10000)}
+                            ])},
+                            {'allocate|tokenizer':'youtokentome', 'allocate|vocab_size':hp.uniform('vocab_size', 50, 50000)}
+                        ])
+                        }
+
+
         class HyperOptFIFO(FIFOScheduler):
             def on_trial_complete(self, trial_runner, trial, result):
                 algo.save(hyper_opt_checkpoint_dir)
@@ -198,12 +229,7 @@ def tune_training(config):
 
                 return super().on_trial_complete(trial_runner, trial, result)
 
-        space = {"allocate|hidden_size": hp.quniform("hidden_size", 32, 700, 2),
-                 "allocate|embedding_size": hp.quniform("embedding_size", 32, 700, 2),
-                 "allocate|bidirectional": hp.choice("bidirectional", [True, False]),
-                 "allocate|num_layers": hp.quniform("num_layers", 1, 5, 1),
-                 "allocate|penalize_all_steps": hp.choice("penalize_all_steps", [True, False])
-                 }
+        space = get_hyperopt_space(config)
 
         algo = HyperOptSearch(space, max_concurrent=1, metric=config['tune']['discriminating_metric'],
                               mode=config['tune']['discriminating_metric_mode'], n_initial_points=7,
@@ -233,6 +259,9 @@ def tune_training(config):
 
     else:
         raise NotImplementedError()
+
+
+
 
 
 if __name__ == '__main__':

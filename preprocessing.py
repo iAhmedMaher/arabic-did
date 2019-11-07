@@ -51,6 +51,9 @@ class TextPreprocessor(object):
                                                                  do_lower_case=False, do_basic_tokenize=False)
             self.n_tokens = -1
 
+        else:
+            raise NotImplementedError('No tokenization method called ' + config['preprocessing']['tokenizer'])
+
     def youtokentome_tokenizer(self, processed_texts):
         int_tokenized_texts = [self.bpe_model.encode(processed_text, output_type=yttm.OutputType.ID)
                                for processed_text in processed_texts]

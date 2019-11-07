@@ -22,17 +22,19 @@ def replace_value_in_nested_dict(node, kv, new_value):
             for x in replace_value_in_nested_dict(j, kv, new_value):
                 yield x
 
-
-def inject_tuned_hyperparameters(config):
+# TODO global config is a kludge
+def inject_tuned_hyperparameters(global_config, config):
     for k in config.keys():
         if k.split('|')[0] == 'allocate':
-            list(replace_value_in_nested_dict(config, k.split('|')[1], config[k]))
+            list(replace_value_in_nested_dict(global_config, k.split('|')[1], config[k]))
+        elif k.split('|')[0] == 'nested':
+            inject_tuned_hyperparameters(global_config, config[k])
     return config
 
 
 class TuneTrainable(Trainable):
     def _setup(self, config):
-        inject_tuned_hyperparameters(config)
+        inject_tuned_hyperparameters(config, config)
         os.chdir(os.path.dirname(os.path.realpath(__file__)))
         print('Trainable got the following config after injection', config)
         self.config = config
@@ -104,7 +106,7 @@ class TuneTrainable(Trainable):
                 accu_diff_avg = abs(results[self.config['tune']['discriminating_metric']] - self.ewma.get())
                 accu_diff_cons = abs(results[self.config['tune']['discriminating_metric']] - self.last_accu)
 
-                no_change_in_accu = 1 if accu_diff_avg < 0.0005 and accu_diff_cons < 0.002 else 0
+                no_change_in_accu = 1 if accu_diff_avg < 0.0005 and accu_diff_cons < 0.002 and self.num_examples > 70000 else 0
                 self.ewma.update(results[self.config['tune']['discriminating_metric']])
                 self.last_accu = results[self.config['tune']['discriminating_metric']]
                 self.max_accu = max(self.max_accu, results[self.config['tune']['discriminating_metric']])
@@ -130,7 +132,7 @@ class TuneTrainable(Trainable):
             optimizer.load_state_dict(checkpoint['op_' + str(i) + '_state_dict'])
 
     def stop(self):
-        results, assets, image_fns = self.evaluator.eval_model(self.model, self.loss_func, finished_training=True)
+        results, assets, image_fns = self.evaluator.eval_model(self.model, finished_training=True)
         self.exp.log_metrics(results, step=self.num_examples, epoch=self.epoch)
         [self.exp.log_asset_data(asset, step=self.num_examples) for asset in assets]
         [self.exp.log_image(fn, step=self.num_examples) for fn in image_fns]
