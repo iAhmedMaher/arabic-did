@@ -50,6 +50,7 @@ def get_eval_dataloader(config):
 
     return eval_dataset
 
+
 def get_shuffled_train_eval(config):
     global train_eval_pd
     if train_eval_pd is None:
@@ -73,7 +74,7 @@ def get_optimizers(model, config):
         else:
             sparse = optim.SparseAdam(model.get_sparse_parameters(), lr=config['optimizer']['lr'],
                                       betas=config['optimizer']['betas'],
-                                      eps=config['optimizer']['eps'], weight_decay=config['optimizer']['weight_decay'])
+                                      eps=config['optimizer']['eps'])
             return non_sparse, sparse
     else:
         raise NotImplementedError()
@@ -111,6 +112,7 @@ def setup_training(config):
 
     return experiment, model, train_dataloader, eval_dataloader
 
+
 # TODO DEPRECATED (won't work)
 def normal_training(config):
     device = torch.device(config['device'])
@@ -144,7 +146,7 @@ def training_step(training_batch, model, optimizers):
     [opt.zero_grad() for opt in optimizers]
     labels, tokens = training_batch
     predicted_labels, loss = model(tokens, labels)
-    train_accuracy = predicted_labels[predicted_labels == labels].nelement()/labels.nelement()
+    train_accuracy = predicted_labels[predicted_labels == labels].nelement() / labels.nelement()
     loss.backward()
     [opt.step() for opt in optimizers]
     return loss, train_accuracy
@@ -164,7 +166,7 @@ def tune_training(config):
     from hyperopt import hp
 
     ray.init()
-    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu' : 1} # TODO
+    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu': 1}  # TODO
     if config['tune']['tuning_method'] == 'bohb':
         config_space = CS.ConfigurationSpace(seed=42)
 
@@ -208,19 +210,51 @@ def tune_training(config):
                         "allocate|dropouth": hp.normal("dropouth", 0.3, 0.2),
                         "allocate|dropouti": hp.normal("dropouti", 0.3, 0.2),
                         "allocate|dropoute": hp.normal("dropoute", 0.0, 0.13),
-                        #"allocate|wdrop": hp.normal("wdrop", 0.0, 0.1),
+                        # "allocate|wdrop": hp.normal("wdrop", 0.0, 0.1),
                         "allocate|ar_alpha": hp.normal("ar_alpha", 2, 3),
                         "allocate|weight_decay": hp.lognormal("weight_decay", -13, 5),
                         "allocate|lr": hp.lognormal('lr', -6, 1),
                         "nested|tokens_config": hp.choice('tokens_config', [
-                            {'allocate|tokenizer':'standard_tokenizer', 'nested|tokenization_method':hp.choice('tokenization_method', [
-                                {'allocate|tokenization' : 'char'},
-                                {'allocate|tokenization' : 'word', 'allocate|per_class_vocab_size' : hp.uniform('per_class_vocab_size', 1000, 10000)}
-                            ])},
-                            {'allocate|tokenizer':'youtokentome', 'allocate|vocab_size':hp.uniform('vocab_size', 50, 50000)}
+                            {'allocate|tokenizer': 'standard_tokenizer',
+                             'nested|tokenization_method': hp.choice('tokenization_method', [
+                                 {'allocate|tokenization': 'char'},
+                                 {'allocate|tokenization': 'word',
+                                  'allocate|per_class_vocab_size': hp.uniform('per_class_vocab_size', 1000, 10000)}
+                             ])},
+                            {'allocate|tokenizer': 'youtokentome',
+                             'allocate|vocab_size': hp.uniform('vocab_size', 50, 50000)}
                         ])
                         }
 
+            elif config['model'] == 'vdcnn':
+                return {"allocate|embedding_size": hp.quniform("embedding_size", 32, 1024, 4),
+                        "allocate|dropout": hp.normal("dropout", 0.3, 0.2),
+                        "allocate|apply_shortcut": hp.choice("apply_shortcut", [True, False]),
+                        "allocate|k": hp.normal("k", 8, 2),
+                        "allocate|dense_nlayers": hp.normal("dense_nlayers", 3, 1),
+                        "allocate|dense_nfeatures": hp.normal("dense_nfeatures", 2048, 900),
+                        "allocate|conv1_nblocks": hp.uniform("conv1_nblocks", 0, 10),
+                        "allocate|conv2_nblocks": hp.uniform("conv2_nblocks", 0, 10),
+                        "allocate|conv3_nblocks": hp.uniform("conv3_nblocks", 0, 5),
+                        "allocate|conv4_nblocks": hp.uniform("conv4_nblocks", 0, 5),
+                        "allocate|conv0_nfmaps": hp.normal("conv0_nfmaps", 64, 20),
+                        "allocate|conv1_nfmaps": hp.normal("conv1_nfmaps", 64, 20),
+                        "allocate|conv2_nfmaps": hp.normal("conv2_nfmaps", 128, 30),
+                        "allocate|conv3_nfmaps": hp.normal("conv3_nfmaps", 256, 50),
+                        "allocate|conv4_nfmaps": hp.normal("conv4_nfmaps", 512, 100),
+                        "allocate|weight_decay": hp.lognormal("weight_decay", -13, 5),
+                        "allocate|lr": hp.lognormal('lr', -6, 1),
+                        "nested|tokens_config": hp.choice('tokens_config', [
+                            {'allocate|tokenizer': 'standard_tokenizer',
+                             'nested|tokenization_method': hp.choice('tokenization_method', [
+                                 {'allocate|tokenization': 'char'},
+                                 {'allocate|tokenization': 'word',
+                                  'allocate|per_class_vocab_size': hp.uniform('per_class_vocab_size', 1000, 10000)}
+                             ])},
+                            {'allocate|tokenizer': 'youtokentome',
+                             'allocate|vocab_size': hp.uniform('vocab_size', 50, 50000)}
+                        ])
+                        }
 
         class HyperOptFIFO(FIFOScheduler):
             def on_trial_complete(self, trial_runner, trial, result):
@@ -259,9 +293,6 @@ def tune_training(config):
 
     else:
         raise NotImplementedError()
-
-
-
 
 
 if __name__ == '__main__':

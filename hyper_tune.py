@@ -110,6 +110,7 @@ class TuneTrainable(Trainable):
                 self.ewma.update(results[self.config['tune']['discriminating_metric']])
                 self.last_accu = results[self.config['tune']['discriminating_metric']]
                 self.max_accu = max(self.max_accu, results[self.config['tune']['discriminating_metric']])
+                self.exp.log_metric('max_accuracy', self.max_accu, step=self.num_examples, epoch=self.epoch)
 
                 training_results = {
                     self.config['tune']['discriminating_metric']: self.max_accu,
