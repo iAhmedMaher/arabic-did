@@ -1,8 +1,8 @@
 import torch.nn as nn
-from transformers import BertForSequenceClassification, BertConfig
+from transformers import BertForSequenceClassification, BertConfig, BertModel
 import torch
 from salesforce.model import RNNModel
-from salesforce.utils import batchify, get_batch, repackage_hidden
+from salesforce.utils import repackage_hidden
 
 
 def get_model(input_size, config):
@@ -10,21 +10,23 @@ def get_model(input_size, config):
         return SimpleGRU(input_size, config)
     elif config['model'] == 'simple_lstm':
         return SimpleLSTM(input_size, config)
-    elif config['model'] == 'bert':
-        return Bert(input_size, config)
+    elif config['model'] == 'bert_pretrained':
+        return BertPreTrained(input_size, config)
     elif config['model'] == 'awd_rnn':
         return AWDRNN(input_size, config)
     elif config['model'] == 'vdcnn':
         return VDCNN(input_size, config)
+    elif config['model'] == 'bert':
+        return Bert(input_size, config)
 
     raise NotImplementedError()
 
 
 # TODO deprecated (won't work)
-class Bert(nn.Module):
+class BertPreTrained(nn.Module):
     def __init__(self, input_size, config):
-        super(Bert, self).__init__()
-        self.transformer = BertForSequenceClassification.from_pretrained(config['bert']['pretrained'],
+        super(BertPreTrained, self).__init__()
+        self.transformer = BertForSequenceClassification.from_pretrained(config['bert_pretrained']['model'],
                                                                          num_labels=len(config['labels_to_int']))
 
     def forward(self, x):
@@ -131,6 +133,66 @@ class SimpleLSTM(nn.Module):
             return predicted_labels
 
 
+class Bert(nn.Module):
+    def __init__(self, input_size, config):
+        super(Bert, self).__init__()
+        self.device = config['device']
+        self.penalize_all_steps = config['penalize_all_steps']
+        self.cls_token = input_size
+        hidden_size = (int(config['bert']['hidden_size']) // int(config['bert']['n_att_heads'])) * int(config['bert']['n_att_heads'])
+        self.out_size = len(config['labels_to_int'])
+
+        bert_config = BertConfig(vocab_size_or_config_json_file=input_size+1,
+                                 hidden_size=int(hidden_size),
+                                 hidden_act='relu', max_position_embeddings=config['preprocessing']['max_seq_len'],
+                                 type_vocab_size=1, num_hidden_layers=int(config['bert']['n_bert_layers']),
+                                 num_attention_heads=int(config['bert']['n_att_heads']),
+                                 intermediate_size=int(config['bert']['intermediate_dense_size']),
+                                 hidden_dropout_prob=abs(config['bert']['hidden_dropout']),
+                                 attention_probs_dropout_prob=abs(config['bert']['att_dropout']))
+
+        self.bert = BertModel(bert_config)
+        self.dense = nn.Linear(int(hidden_size), self.out_size)
+
+        self.loss_fn = nn.CrossEntropyLoss()
+        self.softmax = nn.Softmax(dim=-1)
+
+    def forward(self, x, y=None):
+        seq_len, batch_size = x.size()[0], x.size()[1]
+        # Add CLS token to sequence
+        torch.cat([(torch.ones((1, batch_size), dtype=torch.long) * self.cls_token).to(self.device), x], dim=0)
+
+        x = x.permute(1, 0)
+        x = self.bert(x)[0]  # TODO supply your own embedding to avoid token_type embedding
+        x = x.permute(1, 0, 2)
+
+        x = self.dense(x)
+
+        predicted_labels = (self.softmax(x[0, :, :])).argmax(-1)
+
+        if y is not None:
+            if self.penalize_all_steps:
+                x = x.view(-1, self.out_size)
+                y = y.repeat(seq_len)
+
+            else:
+                x = x[0, :, :]
+
+            loss = self.loss_fn(x, y)
+
+            return predicted_labels, loss
+
+        else:
+            return predicted_labels
+
+
+    def get_non_sparse_parameters(self):
+        return self.parameters()
+
+    def get_sparse_parameters(self):
+        return []
+
+
 class AWDRNN(nn.Module):
     def __init__(self, input_size, config):
         super(AWDRNN, self).__init__()
@@ -212,7 +274,7 @@ class VDCNN(nn.Module):
             current_blocks = []
             for j in range(n_blocks):
                 block = ConvBlock(current_fmaps, n_fmaps, abs(config['vdcnn']['dropout']),
-                                                config['vdcnn']['apply_shortcut'])
+                                  config['vdcnn']['apply_shortcut'])
                 current_blocks.append(block)
                 self.temp.append(block)
                 current_fmaps = n_fmaps
@@ -304,7 +366,6 @@ class ConvBlock(nn.Module):
 
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(p=dropout)
-
 
         if in_channels != out_channels and self.apply_shortcut:
             self.conv_shortcut = nn.Conv1d(in_channels=in_channels, out_channels=out_channels, kernel_size=3, padding=1)

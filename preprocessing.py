@@ -47,7 +47,7 @@ class TextPreprocessor(object):
 
         elif config['preprocessing']['tokenizer'] == 'transformers_tokenizer':
             self.tokenizer = self.transformers_tokenizer
-            self.inner_tokenizer = BertTokenizer.from_pretrained(config['transformers_tokenizer']['pretrained'],
+            self.inner_tokenizer = BertTokenizer.from_pretrained(config['transformers_tokenizertransformers_tokenizer']['model'],
                                                                  do_lower_case=False, do_basic_tokenize=False)
             self.n_tokens = -1
 

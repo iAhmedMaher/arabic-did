@@ -255,6 +255,29 @@ def tune_training(config):
                              'allocate|vocab_size': hp.uniform('vocab_size', 50, 50000)}
                         ])
                         }
+            elif config['model'] == 'bert':
+                return {"allocate|hidden_dropout": hp.normal("hidden_dropout", 0.0, 0.2),
+                        "allocate|att_dropout": hp.normal("att_dropout", 0.0, 0.2),
+                        "allocate|hidden_size": hp.quniform("hidden_size", 32, 1024, 4),
+                        "allocate|n_bert_layers": hp.uniform("n_bert_layers", 1, 8),
+                        "allocate|n_att_heads": hp.uniform("n_att_heads", 1, 8),
+                        "allocate|intermediate_dense_size": hp.quniform("intermediate_dense_size", 32, 1024, 4),
+                        "allocate|penalize_all_steps": hp.choice("penalize_all_steps", [True, False]),
+                        "allocate|weight_decay": hp.lognormal("weight_decay", -13, 5),
+                        "allocate|lr": hp.lognormal('lr', -6, 1),
+                        "nested|tokens_config": hp.choice('tokens_config', [
+                            {'allocate|tokenizer': 'standard_tokenizer',
+                             'nested|tokenization_method': hp.choice('tokenization_method', [
+                                 {'allocate|tokenization': 'char'},
+                                 {'allocate|tokenization': 'word',
+                                  'allocate|per_class_vocab_size': hp.uniform('per_class_vocab_size', 1000, 10000)}
+                             ])},
+                            {'allocate|tokenizer': 'youtokentome',
+                             'allocate|vocab_size': hp.uniform('vocab_size', 50, 50000)}
+                        ])
+                        }
+            else:
+                raise NotImplementedError()
 
         class HyperOptFIFO(FIFOScheduler):
             def on_trial_complete(self, trial_runner, trial, result):
