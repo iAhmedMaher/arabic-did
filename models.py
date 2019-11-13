@@ -22,18 +22,25 @@ def get_model(input_size, config):
     raise NotImplementedError()
 
 
-# TODO deprecated (won't work)
 class BertPreTrained(nn.Module):
     def __init__(self, input_size, config):
         super(BertPreTrained, self).__init__()
         self.transformer = BertForSequenceClassification.from_pretrained(config['bert_pretrained']['model'],
                                                                          num_labels=len(config['labels_to_int']))
 
-    def forward(self, x):
+    def forward(self, x, y=None):
         x = x.permute(1, 0)
         attn_mask = (x != 0).float()
-        x = self.transformer(x, attention_mask=attn_mask)[0].unsqueeze(0)
-        return x
+
+        if y is not None:
+            loss, logits = self.transformer(x, labels=y, attention_mask=attn_mask)
+            predicted_labels = logits.argmax(-1)
+
+            return predicted_labels, loss
+        else:
+            logits = self.transformer(x, attention_mask=attn_mask)
+            return logits.argmax(-1)
+
 
     def get_non_sparse_parameters(self):
         return self.parameters()
@@ -252,6 +259,7 @@ class VDCNN(nn.Module):
 
     def __init__(self, input_size, config):
         super(VDCNN, self).__init__()
+        self.device = config['device']
         self.k = max(1, int(config['vdcnn']['k']))
 
         self.embedding_layer = nn.Embedding(input_size, int(config['vdcnn']['embedding_size']), padding_idx=0,
@@ -305,6 +313,10 @@ class VDCNN(nn.Module):
         self.temp2 = nn.Sequential(*self.temp)
 
     def kmax_pooling(self, x, dim):
+        if x.size()[dim] < self.k:
+            pad_size = list(x.size())
+            pad_size[dim] = self.k - x.size()[dim]
+            return torch.cat([x, torch.zeros(pad_size, dtype=torch.float).to(self.device)], dim=dim)
         index = x.topk(self.k, dim=dim)[1].sort(dim=dim)[0]
         return x.gather(dim, index)
 

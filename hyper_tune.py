@@ -7,6 +7,7 @@ from average import EWMA
 from colorama import Fore
 from colorama import Style
 from helpers import flatten_dict
+import uuid
 
 
 def replace_value_in_nested_dict(node, kv, new_value):
@@ -41,6 +42,7 @@ class TuneTrainable(Trainable):
         self.device = self.config['device']
         self.exp, self.model, self.train_dataloader, self.eval_dataloader = setup_training(self.config)
         self.exp.set_name(config['experiment_name'] + self._experiment_id)
+        self.exp_name = config['experiment_name'] + self._experiment_id
         self.exp.send_notification(title='Experiment ' + str(self._experiment_id) + ' ended')
         self.train_data_iter = iter(self.train_dataloader)
         self.model = self.model.to(self.device)
@@ -57,6 +59,8 @@ class TuneTrainable(Trainable):
         self.ewma = EWMA(beta=0.75)
         self.last_accu = -1.0
         self.max_accu = -1.0
+        self.back_prop_every_n_batches = config['training']['back_prop_every_n_batches']
+        self.checkpoint_best = config['training']['checkpoint_best']
 
     def get_batch(self):
         try:
@@ -75,12 +79,14 @@ class TuneTrainable(Trainable):
         total_log_step_train_accu = 0
         total_log_step_n = 0
 
+
+        [opt.zero_grad() for opt in self.optimizers]
         while True:
             batch = self.get_batch()
             self.batch_idx += 1
             self.num_examples += len(batch[0])
             batch = (batch[0].to(self.device), batch[1].to(self.device))
-            loss, train_accu = training_step(batch, self.model, self.optimizers)
+            loss, train_accu = training_step(batch, self.model, self.optimizers, step=(self.batch_idx % self.back_prop_every_n_batches == 0))
             total_log_step_loss += loss.cpu().detach().numpy()
             total_log_step_train_accu += train_accu
             total_log_step_n += 1
@@ -109,7 +115,13 @@ class TuneTrainable(Trainable):
                 no_change_in_accu = 1 if accu_diff_avg < 0.0005 and accu_diff_cons < 0.002 and self.num_examples > 70000 else 0
                 self.ewma.update(results[self.config['tune']['discriminating_metric']])
                 self.last_accu = results[self.config['tune']['discriminating_metric']]
-                self.max_accu = max(self.max_accu, results[self.config['tune']['discriminating_metric']])
+
+                if self.max_accu < results[self.config['tune']['discriminating_metric']]:
+                    self.max_accu = results[self.config['tune']['discriminating_metric']]
+                    if self.checkpoint_best:
+                        self.save_checkpoint('checkpoints', self.exp_name + '.pt')
+                        print(f'{Fore.GREEN}New best model saved.{Style.RESET_ALL}')
+
                 self.exp.log_metric('max_accuracy', self.max_accu, step=self.num_examples, epoch=self.epoch)
 
                 training_results = {
@@ -119,11 +131,15 @@ class TuneTrainable(Trainable):
                 return training_results
 
     def _save(self, checkpoint_dir):
+        return self.save_checkpoint(checkpoint_dir, 'checkpoint_file.pt')
+
+    def save_checkpoint(self, checkpoint_dir, fname='checkpoint_file.pt'):
+        print(f'{Fore.CYAN}Saving model ...{Style.RESET_ALL}')
         save_dict = {'model_state_dict': self.model.state_dict()}
         for i, optimizer in enumerate(self.optimizers):
             save_dict['op_' + str(i) + '_state_dict'] = optimizer.state_dict()
-        torch.save(save_dict, os.path.join(checkpoint_dir, 'checkpoint_file.pt'))
-        return os.path.join(checkpoint_dir, 'checkpoint_file.pt')
+        torch.save(save_dict, os.path.join(checkpoint_dir, fname))
+        return os.path.join(checkpoint_dir, fname)
 
     def _restore(self, checkpoint_path):
         checkpoint = torch.load(checkpoint_path)
@@ -137,4 +153,5 @@ class TuneTrainable(Trainable):
         self.exp.log_metrics(results, step=self.num_examples, epoch=self.epoch)
         [self.exp.log_asset_data(asset, step=self.num_examples) for asset in assets]
         [self.exp.log_image(fn, step=self.num_examples) for fn in image_fns]
+
         return super().stop()

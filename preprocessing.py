@@ -13,6 +13,7 @@ from colorama import Style
 import youtokentome as yttm
 import os
 import uuid
+import config as cfg
 
 # TODO: normalize arabic presentation forms
 
@@ -47,12 +48,18 @@ class TextPreprocessor(object):
 
         elif config['preprocessing']['tokenizer'] == 'transformers_tokenizer':
             self.tokenizer = self.transformers_tokenizer
-            self.inner_tokenizer = BertTokenizer.from_pretrained(config['transformers_tokenizertransformers_tokenizer']['model'],
+            self.inner_tokenizer = BertTokenizer.from_pretrained(config['transformers_tokenizer']['model'],
                                                                  do_lower_case=False, do_basic_tokenize=False)
-            self.n_tokens = -1
+            self.n_tokens = self.inner_tokenizer.vocab_size
+
+        elif config['preprocessing']['tokenizer'] == 'hulmona_tokenizer':
+            self.tokenizer = self.hulmona_tokenizer
+            self.n_tokens = None
 
         else:
             raise NotImplementedError('No tokenization method called ' + config['preprocessing']['tokenizer'])
+
+        print('Vocab size is', self.n_tokens)
 
     def youtokentome_tokenizer(self, processed_texts):
         int_tokenized_texts = [self.bpe_model.encode(processed_text, output_type=yttm.OutputType.ID)
@@ -61,6 +68,10 @@ class TextPreprocessor(object):
         max_seq_len = min(self.max_allowed_seq,
                           max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts]))
         return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]
+
+    def hulmona_tokenizer(self, processed_texts):
+        pass
+
 
     def get_char2int_dict(self):
         all_chars = ' '.join([chr(c) for c in range(2 ** 16)])
@@ -163,7 +174,7 @@ class TextPreprocessor(object):
         if self.tokenization == 'char':
             return self.char_tokenize(text)
         elif self.tokenization == 'word':
-            self.word_tokenize(text)
+            #return self.word_tokenize(text)
             return text
         else:
             raise NotImplementedError()
@@ -202,19 +213,31 @@ class TextPreprocessor(object):
                           max([len(int_tokenized_text) for int_tokenized_text in int_tokenized_texts]))
         return [self.standardize_tokens_length(int_toks, max_seq_len) for int_toks in int_tokenized_texts]
 
+    def get_model_input(self, original_texts):
+        processed_texts = [self.process_text(text) for text in original_texts]
+
+        int_tokenized_texts_list = self.tokenizer(processed_texts)
+        int_tokenized_texts_tensor = torch.LongTensor(int_tokenized_texts_list)
+
+        # Pytorch prefers sequence batches to be T, B, F
+        int_tokenized_texts_tensor = int_tokenized_texts_tensor.permute(1, 0)
+
+        return int_tokenized_texts_tensor, processed_texts
+
+
     def __call__(self, batch):
         int_labels = [self.labels_to_int[pair[0]] for pair in batch]
         int_labels_tensor = torch.LongTensor(int_labels)
 
         original_texts = [pair[1] for pair in batch]
-        processed_texts = [self.process_text(text) for text in original_texts]
 
-        int_tokenized_texts_list = self.tokenizer(processed_texts)
-        int_tokenized_texts_tensor = torch.LongTensor(int_tokenized_texts_list)
-        int_tokenized_texts_tensor = int_tokenized_texts_tensor.permute(1,
-                                                                        0)  # Pytorch prefers sequence batches to be T, B, F
+        int_tokenized_texts_tensor, processed_texts = self.get_model_input(original_texts)
 
         if self.return_text:
             return int_labels_tensor, int_tokenized_texts_tensor, original_texts, processed_texts
         else:
             return int_labels_tensor, int_tokenized_texts_tensor
+
+
+if __name__ == '__main__':
+    proc = TextPreprocessor(cfg.default_config, pd.read_csv(r'..\datasets\Shami\train\train.csv'))

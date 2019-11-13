@@ -65,6 +65,7 @@ def get_shuffled_train_eval(config):
 
 def get_optimizers(model, config):
     if config['optimizer']['name'] == 'adam':
+
         non_sparse = optim.Adam(model.get_non_sparse_parameters(), lr=config['optimizer']['lr'],
                                 betas=config['optimizer']['betas'],
                                 eps=config['optimizer']['eps'], weight_decay=config['optimizer']['weight_decay'])
@@ -89,6 +90,7 @@ def setup_training(config):
         train_ds = get_train_dataloader(config)
         eval_ds = get_eval_dataloader(config)
 
+    train_ds.limit_dataset_size(config['training']['dataset_size'])
     train_df = train_ds.get_pandas_df()
 
     train_text_proc = TextPreprocessor(config, train_df)
@@ -141,14 +143,15 @@ def normal_training(config):
                     exp.log_metric(metric, results[metric], step=num_examples, epoch=epoch)
 
 
-def training_step(training_batch, model, optimizers):
+def training_step(training_batch, model, optimizers, step=True):
     model.train()
-    [opt.zero_grad() for opt in optimizers]
     labels, tokens = training_batch
     predicted_labels, loss = model(tokens, labels)
     train_accuracy = predicted_labels[predicted_labels == labels].nelement() / labels.nelement()
     loss.backward()
-    [opt.step() for opt in optimizers]
+    if step:
+        [opt.step() for opt in optimizers]
+        [opt.zero_grad() for opt in optimizers]
     return loss, train_accuracy
 
 
@@ -166,8 +169,17 @@ def tune_training(config):
     from hyperopt import hp
 
     ray.init()
-    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu': 1}  # TODO
-    if config['tune']['tuning_method'] == 'bohb':
+    stop_dict = {'num_examples': config['tune']['max_t'], 'no_change_in_accu': 2}
+    if config['tune']['tuning_method'] == 'grid':
+        config['training']['dataset_size'] = tune.grid_search([0.2, 0.4, 0.6, 0.8])
+
+        tune.run(TuneTrainable, config=config, num_samples=config['tune']['n_samples'],
+                 name=config['experiment_name'], resume=False, checkpoint_at_end=False,
+                 resources_per_trial=config['tune']['resources_per_trial'],
+                 local_dir=config['tune']['working_dir'], stop=stop_dict)
+
+
+    elif config['tune']['tuning_method'] == 'bohb':
         config_space = CS.ConfigurationSpace(seed=42)
 
         # replace | convention is a kludge because of BOHB's specialized interface
@@ -206,7 +218,7 @@ def tune_training(config):
                         "allocate|embedding_size": hp.quniform("embedding_size", 32, 1024, 4),
                         "allocate|num_layers": hp.quniform("num_layers", 1, 6, 1),
                         "allocate|penalize_all_steps": hp.choice("penalize_all_steps", [True, False]),
-                        "allocate|dropout": hp.normal("dropout", 0.3, 0.2),
+                        "allocate|dropouto": hp.normal("dropouto", 0.3, 0.2),
                         "allocate|dropouth": hp.normal("dropouth", 0.3, 0.2),
                         "allocate|dropouti": hp.normal("dropouti", 0.3, 0.2),
                         "allocate|dropoute": hp.normal("dropoute", 0.0, 0.13),
