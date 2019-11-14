@@ -164,7 +164,8 @@ class Bert(nn.Module):
         self.loss_fn = nn.CrossEntropyLoss()
         self.softmax = nn.Softmax(dim=-1)
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, return_probs=False):
+        # TODO refactor return
         seq_len, batch_size = x.size()[0], x.size()[1]
         # Add CLS token to sequence
         torch.cat([(torch.ones((1, batch_size), dtype=torch.long) * self.cls_token).to(self.device), x], dim=0)
@@ -175,7 +176,8 @@ class Bert(nn.Module):
 
         x = self.dense(x)
 
-        predicted_labels = (self.softmax(x[0, :, :])).argmax(-1)
+        probs = self.softmax(x[0, :, :])
+        predicted_labels = probs.argmax(-1)
 
         if y is not None:
             if self.penalize_all_steps:
@@ -187,9 +189,14 @@ class Bert(nn.Module):
 
             loss = self.loss_fn(x, y)
 
-            return predicted_labels, loss
+            if return_probs:
+                return predicted_labels, loss, probs
+            else:
+                return predicted_labels, loss
 
         else:
+            if return_probs:
+                return predicted_labels, probs
             return predicted_labels
 
 
@@ -221,7 +228,8 @@ class AWDRNN(nn.Module):
         self.softmax = nn.Softmax(dim=-1)
         self.loss_fn = nn.CrossEntropyLoss()
 
-    def forward(self, x, y=None):
+    def forward(self, x, y=None, return_probs=False):
+        # TODO refactor return
         seq_len, batch_size = x.size()[0], x.size()[1]
 
         hidden = self.rnn.init_hidden(batch_size)
@@ -230,7 +238,8 @@ class AWDRNN(nn.Module):
         x, hidden, rnn_hs, dropped_rnn_hs = self.rnn(x, hidden, return_h=True)
         x = self.dense(x)
 
-        predicted_labels = (self.softmax(x[-1, :, :])).argmax(-1)
+        probs = self.softmax(x[-1, :, :])
+        predicted_labels = probs.argmax(-1)
 
         if y is not None:
             if self.penalize_all_steps:
@@ -243,9 +252,14 @@ class AWDRNN(nn.Module):
             loss = self.loss_fn(x, y) + sum(
                 self.ar_alpha * dropped_rnn_h.pow(2).mean() for dropped_rnn_h in dropped_rnn_hs[-1:])
 
-            return predicted_labels, loss
+            if return_probs:
+                return predicted_labels, loss, probs
+            else:
+                return predicted_labels, loss
 
         else:
+            if return_probs:
+                return predicted_labels, probs
             return predicted_labels
 
     def get_non_sparse_parameters(self):

@@ -34,11 +34,12 @@ class TextPreprocessor(object):
         self.max_allowed_seq = config['preprocessing']['max_seq_len']
         self.return_text = return_text
 
+        # !!!!! Important note: In old experiments, char_simple was called word !!!!!
         if config['preprocessing']['tokenizer'] == 'standard_tokenizer':
             self.tokenizer = self.standard_tokenizer
             self.tokenization = config['standard_tokenizer']['tokenization']
             self.token2int_dict = self.get_char2int_dict() if self.tokenization == 'char' \
-                else self.get_word2int_dict(config, train_df)
+                else self.get_top2int_dict(config, train_df)
             self.n_tokens = len(self.token2int_dict)
 
         elif config['preprocessing']['tokenizer'] == 'youtokentome':
@@ -72,7 +73,6 @@ class TextPreprocessor(object):
     def hulmona_tokenizer(self, processed_texts):
         pass
 
-
     def get_char2int_dict(self):
         all_chars = ' '.join([chr(c) for c in range(2 ** 16)])
         all_possible_chars = self.tokenize_text(self.process_text(all_chars))
@@ -85,7 +85,8 @@ class TextPreprocessor(object):
         return char2int
 
     # TODO allow different word tokenization techniques
-    def get_word2int_dict(self, config, train_df):
+    # !!!!! Important note: In old experiments, char_simple was called word !!!!!
+    def get_top2int_dict(self, config, train_df):
         token_dict = {}
         for label in self.labels_to_int.keys():
             text_lists = list(train_df[train_df.label == label]['text'])
@@ -170,12 +171,14 @@ class TextPreprocessor(object):
                 f'{Fore.RED}Text processor got empty text midst cleaning. Please clean the dataset properly. Returning فارغ ... {Style.RESET_ALL}')
             return "فارغ"
 
+    # !!!!! Important note: In old experiments, char_simple was called word !!!!!
     def tokenize_text(self, text):
         if self.tokenization == 'char':
             return self.char_tokenize(text)
-        elif self.tokenization == 'word':
-            #return self.word_tokenize(text)
+        elif self.tokenization == 'char_simple':
             return text
+        elif self.tokenization == 'word':
+            return self.word_tokenize(text)
         else:
             raise NotImplementedError()
 
@@ -223,7 +226,6 @@ class TextPreprocessor(object):
         int_tokenized_texts_tensor = int_tokenized_texts_tensor.permute(1, 0)
 
         return int_tokenized_texts_tensor, processed_texts
-
 
     def __call__(self, batch):
         int_labels = [self.labels_to_int[pair[0]] for pair in batch]
