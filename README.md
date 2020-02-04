@@ -20,3 +20,9 @@ The following table includes the performance results of applying the best model,
 | Model | Dev Micro Avg | Dev Macro Avg | Test Micro Avg | Test Macro Avg |
 | --- | --- | --- | --- | --- |
 | AWD_LSTM | <a href="https://www.comet.ml/iahmedmaher/arabic-did-paper/a9f8af25f53f437685c678fd251c2f4a?experiment-tab=metrics"> 84.741%</a> | <a href="https://www.comet.ml/iahmedmaher/arabic-did-paper/a9f8af25f53f437685c678fd251c2f4a?experiment-tab=metrics">79.743%</a> | <a href="https://www.comet.ml/iahmedmaher/arabic-did-paper/c8676329737743119b5a73a5078c53f6?experiment-tab=metrics">83.380%</a> | <a href="https://www.comet.ml/iahmedmaher/arabic-did-paper/c8676329737743119b5a73a5078c53f6?experiment-tab=metrics">75.721%</a> |
+
+## Explainability
+An attempt was made to explain why the model outputs its prediction. LIME was used, and here are some examples of the results:
+
+![BERT Model](imgs/lime-bert.png)
+![AWD-LSTM Model](imgs/lime-awd.png)
